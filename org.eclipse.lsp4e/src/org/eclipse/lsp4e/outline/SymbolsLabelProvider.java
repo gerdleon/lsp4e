@@ -35,9 +35,7 @@ import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.viewers.DecorationOverlayIcon;
 import org.eclipse.jface.viewers.DelegatingStyledCellLabelProvider.IStyledLabelProvider;
 import org.eclipse.jface.viewers.IDecoration;
-import org.eclipse.jface.viewers.ILabelProviderListener;
 import org.eclipse.jface.viewers.LabelProvider;
-import org.eclipse.jface.viewers.LabelProviderChangedEvent;
 import org.eclipse.jface.viewers.StyledString;
 import org.eclipse.lsp4e.LSPEclipseUtils;
 import org.eclipse.lsp4e.LanguageServerPlugin;
@@ -48,7 +46,6 @@ import org.eclipse.lsp4e.ui.Messages;
 import org.eclipse.lsp4j.DocumentSymbol;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.SymbolInformation;
-import org.eclipse.lsp4j.SymbolKind;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.swt.graphics.Image;
 import org.eclipse.ui.IMemento;
@@ -87,16 +84,12 @@ public class SymbolsLabelProvider extends LabelProvider
 
 	private final boolean showLocation;
 
-	private boolean showKind;
-
 	public SymbolsLabelProvider() {
-		this(false, InstanceScope.INSTANCE.getNode(LanguageServerPlugin.PLUGIN_ID)
-				.getBoolean(CNFOutlinePage.SHOW_KIND_PREFERENCE, false));
+		this(false);
 	}
 
-	public SymbolsLabelProvider(boolean showLocation, boolean showKind) {
+	public SymbolsLabelProvider(boolean showLocation) {
 		this.showLocation = showLocation;
-		this.showKind = showKind;
 		InstanceScope.INSTANCE.getNode(LanguageServerPlugin.PLUGIN_ID).addPreferenceChangeListener(this);
 		ResourcesPlugin.getWorkspace().addResourceChangeListener(listener);
 	}
@@ -262,11 +255,10 @@ public class SymbolsLabelProvider extends LabelProvider
 			element = either.get();
 		}
 		String name = null;
-		SymbolKind kind = null;
+		String detail = null;
 		URI location = null;
 		if (element instanceof SymbolInformation symbolInformation) {
 			name = symbolInformation.getName();
-			kind = symbolInformation.getKind();
 			try {
 				location = URI.create(symbolInformation.getLocation().getUri());
 			} catch (IllegalArgumentException e) {
@@ -274,10 +266,11 @@ public class SymbolsLabelProvider extends LabelProvider
 			}
 		} else if (element instanceof DocumentSymbol documentSymbol) {
 			name = documentSymbol.getName();
-			kind = documentSymbol.getKind();
+			detail = documentSymbol.getDetail();
 		} else if (element instanceof DocumentSymbolWithFile symbolWithFile) {
 			name = symbolWithFile.symbol.getName();
-			kind = symbolWithFile.symbol.getKind();
+			detail = symbolWithFile.symbol.getDetail();
+
 			IFile file = symbolWithFile.file;
 			if (file != null) {
 				location = file.getLocationURI();
@@ -286,9 +279,9 @@ public class SymbolsLabelProvider extends LabelProvider
 		if (name != null) {
 			res.append(name, null);
 		}
-		if (showKind && kind != null) {
+		if (detail != null) {
 			res.append(" :", null); //$NON-NLS-1$
-			res.append(kind.toString(), StyledString.DECORATIONS_STYLER);
+			res.append(detail.toString(), StyledString.DECORATIONS_STYLER);
 		}
 
 		if (showLocation && location != null) {
@@ -317,14 +310,7 @@ public class SymbolsLabelProvider extends LabelProvider
 
 	@Override
 	public void preferenceChange(PreferenceChangeEvent event) {
-		if (event.getKey().equals(CNFOutlinePage.SHOW_KIND_PREFERENCE)) {
-			this.showKind = Boolean.valueOf(event.getNewValue().toString());
-			for (Object listener : this.getListeners()) {
-				if (listener instanceof ILabelProviderListener labelProviderListener) {
-					labelProviderListener.labelProviderChanged(new LabelProviderChangedEvent(this));
-				}
-			}
-		}
+		// NO-OP
 	}
 
 }

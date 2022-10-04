@@ -68,23 +68,6 @@
                id="org.eclipse.ui.commands.toggleState">
          </state>
       </command>
-      <command
-            categoryId="org.eclipse.lsp4e.category"
-            id="org.eclipse.lsp4e.showkindinoutline"
-            name="Show Kind in Outline">
-         <state
-               class="org.eclipse.ui.handlers.RegistryToggleState:true"
-               id="org.eclipse.ui.commands.toggleState">
-         </state>
-      </command>
-      <command
-            categoryId="org.eclipse.lsp4e.category"
-            id="org.eclipse.lsp4e.toggleSortOutline"
-            name="%command.toggle.outline.sort.name">
-         <state
-               class="org.eclipse.ui.handlers.RegistryToggleState:false"
-               id="org.eclipse.ui.commands.toggleState" />
-      </command>
    </extension>
    <extension
          point="org.eclipse.ui.handlers">
@@ -162,12 +145,6 @@
                class="org.eclipse.lsp4e.outline.ToggleLinkingHandler">
          </class>
       </handler>
-      <handler
-            commandId="org.eclipse.lsp4e.showkindinoutline">
-         <class
-               class="org.eclipse.lsp4e.outline.ShowKindHandler">
-         </class>
-      </handler>
       <handler commandId="org.eclipse.lsp4e.toggleSortOutline">
          <class class="org.eclipse.lsp4e.outline.ToggleSortOutlineHandler" />
       </handler>
@@ -223,31 +200,6 @@
          <command
                commandId="org.eclipse.lsp4e.togglelinkwitheditor"
                label="Link with Editor"
-               style="toggle">
-            <visibleWhen
-                  checkEnabled="false">
-               <and>
-	              <with variable="activePart">
-	                 <instanceof
-                           value="org.eclipse.ui.views.contentoutline.ContentOutline">
-                     </instanceof>
-	              </with>
-	              <with
-	                    variable="activePart">
-	                 <test
-	                       property="org.eclipse.lsp4e.hasCNFOutlinePage">
-	                 </test>
-	              </with>
-	           </and>
-            </visibleWhen>
-         </command>
-      </menuContribution>
-      <menuContribution
-            allPopups="false"
-            locationURI="menu:org.eclipse.ui.views.ContentOutline">
-         <command
-               commandId="org.eclipse.lsp4e.showkindinoutline"
-               label="Show Kind"
                style="toggle">
             <visibleWhen
                   checkEnabled="false">

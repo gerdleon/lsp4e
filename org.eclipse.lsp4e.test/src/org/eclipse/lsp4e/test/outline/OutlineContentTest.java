@@ -61,7 +61,7 @@ public class OutlineContentTest {
 				new Range(new Position(1, 0), new Position(1, 2)));
 		DocumentSymbol symbolCat = new DocumentSymbol("cat", SymbolKind.Constant,
 				new Range(new Position(2, 0), new Position(2, 2)),
-				new Range(new Position(2, 0), new Position(2, 2)));
+				new Range(new Position(2, 0), new Position(2, 2)), "additional detail");
 
 		MockLanguageServer.INSTANCE.setDocumentSymbols(symbolCow, symbolFox, symbolCat);
 

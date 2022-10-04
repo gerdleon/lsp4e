@@ -26,7 +26,7 @@ import org.eclipse.ui.quickaccess.QuickAccessElement;
 
 public class WorkspaceSymbolQuickAccessElement extends QuickAccessElement {
 
-	private static final SymbolsLabelProvider LABEL_PROVIDER = new SymbolsLabelProvider(false, false);
+	private static final SymbolsLabelProvider LABEL_PROVIDER = new SymbolsLabelProvider(false);
 	private static final Random randomNumbers = new Random();
 
 	private final WorkspaceSymbol symbol;

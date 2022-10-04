@@ -30,36 +30,22 @@ public class SymbolsLabelProviderTest {
 	private static final Location INVALID_LOCATION = new Location("file:://///invalid_location_uri", new Range(new Position(0,0), new Position(1,1)));
 
 	@Test
-	public void testShowKind() {
-		SymbolsLabelProvider labelProvider = new SymbolsLabelProvider(false, true);
-		SymbolInformation info = new SymbolInformation("Foo", SymbolKind.Class, LOCATION);
-		assertEquals("Foo :Class", labelProvider.getText(info));
-	}
-
-	@Test
-	public void testShowKindLocation() {
-		SymbolsLabelProvider labelProvider = new SymbolsLabelProvider(true, true);
-		SymbolInformation info = new SymbolInformation("Foo", SymbolKind.Class, LOCATION);
-		assertEquals("Foo :Class path/to/foo", labelProvider.getText(info));
-	}
-
-	@Test
 	public void testShowLocation() {
-		SymbolsLabelProvider labelProvider = new SymbolsLabelProvider(true, false);
+		SymbolsLabelProvider labelProvider = new SymbolsLabelProvider(true);
 		SymbolInformation info = new SymbolInformation("Foo", SymbolKind.Class, LOCATION);
 		assertEquals("Foo path/to/foo", labelProvider.getText(info));
 	}
 
 	@Test
 	public void testShowNeither() {
-		SymbolsLabelProvider labelProvider = new SymbolsLabelProvider(false, false);
+		SymbolsLabelProvider labelProvider = new SymbolsLabelProvider(false);
 		SymbolInformation info = new SymbolInformation("Foo", SymbolKind.Class, LOCATION);
 		assertEquals("Foo", labelProvider.getText(info));
 	}
 
 	@Test
 	public void testGetStyledTextInalidLocationURI() {
-		SymbolsLabelProvider labelProvider = new SymbolsLabelProvider(false, false);
+		SymbolsLabelProvider labelProvider = new SymbolsLabelProvider(false);
 		SymbolInformation info = new SymbolInformation("Foo", SymbolKind.Class, INVALID_LOCATION);
 		assertEquals("Foo", labelProvider.getStyledText(info).getString());
 	}
