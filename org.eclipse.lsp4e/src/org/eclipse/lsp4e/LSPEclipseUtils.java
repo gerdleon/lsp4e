@@ -17,6 +17,7 @@
  *  Markus Ofterdinger (SAP SE) - Bug 552140 - NullPointerException in LSP4E
  *  Rubén Porras Campo (Avaloq) - Bug 576425 - Support Remote Files
  *  Pierre-Yves Bigourdan <pyvesdev@gmail.com> - Issue 29
+ *  Bastian Doetsch (Snyk Ltd)
  *******************************************************************************/
 package org.eclipse.lsp4e;
 
@@ -36,8 +37,12 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -58,6 +63,7 @@ import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IMarker;
 import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
+import org.eclipse.core.resources.IResourceStatus;
 import org.eclipse.core.resources.IWorkspaceRoot;
 import org.eclipse.core.resources.ResourceAttributes;
 import org.eclipse.core.resources.ResourcesPlugin;
@@ -121,6 +127,7 @@ import org.eclipse.mylyn.wikitext.markdown.MarkdownLanguage;
 import org.eclipse.mylyn.wikitext.parser.MarkupParser;
 import org.eclipse.swt.graphics.RGB;
 import org.eclipse.swt.graphics.RGBA;
+import org.eclipse.swt.widgets.Display;
 import org.eclipse.text.edits.MalformedTreeException;
 import org.eclipse.text.edits.MultiTextEdit;
 import org.eclipse.text.edits.ReplaceEdit;
@@ -175,7 +182,29 @@ public final class LSPEclipseUtils {
 	}
 
 	public static int toOffset(Position position, IDocument document) throws BadLocationException {
-		return document.getLineOffset(position.getLine()) + position.getCharacter();
+		var line = position.getLine();
+		var character = position.getCharacter();
+
+		/*
+		 * The LSP spec allow for positions to specify the next line if a line should be
+		 * included completely, specifying the first character of the following line. If
+		 * this is at the end of the document, we therefore take the last document line
+		 * and set the character to line length - 1 (to remove delimiter)
+		 */
+		var zeroBasedDocumentLines = Math.max(0, document.getNumberOfLines() - 1);
+		if (zeroBasedDocumentLines < position.getLine()) {
+			line = zeroBasedDocumentLines;
+			character = getLineLength(document, line);
+		} else {
+			// We just take the line length to be more forgiving and adhere to the LSP spec.
+			character = Math.min(getLineLength(document, line), position.getCharacter());
+		}
+
+		return document.getLineOffset(line) + character;
+	}
+
+	private static int getLineLength(IDocument document, int line) throws BadLocationException {
+		return Math.max(0, document.getLineLength(line));
 	}
 
 	public static boolean isOffsetInRange(int offset, Range range, IDocument document) {
@@ -553,10 +582,6 @@ public final class LSPEclipseUtils {
 		if (resource != null) {
 			return getDocument(resource);
 		}
-		if (!fromUri(uri).isFile()) {
-			return null;
-		}
-
 
 		IDocument document = null;
 		IFileStore store = null;
@@ -728,6 +753,9 @@ public final class LSPEclipseUtils {
 	}
 
 	private static IEditorPart openEditor(String uri, IWorkbenchPage page, boolean createFile) {
+		if (page == null) {
+			return null;
+		}
 		// Open file uri in an editor
 		IResource targetResource = findResourceFor(uri);
 		if (targetResource != null && targetResource.getType() == IResource.FILE) {
@@ -844,12 +872,22 @@ public final class LSPEclipseUtils {
 	}
 
 	/**
-	 * Applies a workspace edit. It does simply change the underlying documents.
+	 * Applies a workspace edit. It does simply change the underlying documents if all are currently
+	 * open in an editor, otherwise, it performs a Refactoring that will result on filesystem changes.
 	 *
 	 * @param wsEdit
 	 * @param label
 	 */
 	public static void applyWorkspaceEdit(WorkspaceEdit wsEdit, String label) {
+		if (wsEdit == null) {
+			return;
+		}
+
+		if (applyWorkspaceEditIfSingleOpenFile(wsEdit)) {
+			return;
+		}
+
+		// multiple documents or some ResourceChanges => create a refactoring
 		String name = label == null ? DEFAULT_LABEL : label;
 		Map<URI, Range> changedURIs = new HashMap<>();
 		CompositeChange change = toCompositeChange(wsEdit, name, changedURIs);
@@ -864,12 +902,75 @@ public final class LSPEclipseUtils {
 					// Select the only start position of the range or the document start
 					Range range = changedURIs.get(uri);
 					Position start = range.getStart() != null ? range.getStart() : new Position(0, 0);
-					open(uri.toString(), new Range( start, start));
+					if (Display.getCurrent() != null) {
+						open(uri.toString(), new Range(start, start));
+					} else {
+						UI.getDisplay().asyncExec(() -> open(uri.toString(), new Range(start, start)));
+					}
 				});
 			}
 		} catch (CoreException e) {
 			LanguageServerPlugin.logError(e);
 		}
+	}
+
+	/**
+	 * Applies the workspace edit on an open editor if the given edit affects only 1 open file
+	 * @param wsEdit a workspace edit
+	 * @return <code>true<code> if the wsEdit matches a single open file and was performed on editor,
+	 *         <code>false</code> otherwise, thus the wsEdit needs to be performed differently.
+	 */
+	private static boolean applyWorkspaceEditIfSingleOpenFile(WorkspaceEdit wsEdit) {
+		Set<URI> documentUris = new HashSet<>();
+		final List<TextEdit> firstDocumentEdits = new ArrayList<>(); // collect edits
+		if (wsEdit.getChanges() != null && !wsEdit.getChanges().isEmpty()) {
+			wsEdit.getChanges().entrySet().stream()
+				.map(Entry::getKey)
+				.map(LSPEclipseUtils::toUri)
+				.forEach(documentUris::add);
+			firstDocumentEdits.addAll(wsEdit.getChanges().entrySet().iterator().next().getValue());
+		}
+		if (wsEdit.getDocumentChanges() != null && !wsEdit.getDocumentChanges().isEmpty()) {
+			if (wsEdit.getDocumentChanges().stream().anyMatch(Either::isRight)) {
+				documentUris.clear(); // do not process this as a single doc edit
+			} else {
+				wsEdit.getDocumentChanges().stream()
+					.map(Either::getLeft)
+					.map(TextDocumentEdit::getTextDocument)
+					.map(TextDocumentIdentifier::getUri)
+					.map(LSPEclipseUtils::toUri)
+					.forEach(documentUris::add);
+				firstDocumentEdits.addAll(wsEdit.getDocumentChanges().get(0).getLeft().getEdits());
+			}
+		}
+		if (documentUris.size() != 1 || firstDocumentEdits.isEmpty()) {
+			return false;
+		}
+		URI singleDocumentUri = documentUris.iterator().next();
+		Set<IEditorReference> editors = LSPEclipseUtils.findOpenEditorsFor(singleDocumentUri);
+		if (editors == null || editors.isEmpty()) {
+			return false;
+		}
+		Optional<IDocument> doc = editors.stream().map(editor -> {
+			try {
+				return editor.getEditorInput();
+			} catch (PartInitException ex) {
+				return null;
+			}}).filter(Objects::nonNull)
+			.map(LSPEclipseUtils::getDocument)
+			.filter(Objects::nonNull)
+			.findFirst();
+
+		doc.ifPresent(document -> {
+			UI.getDisplay().syncExec(() -> {
+				try {
+					LSPEclipseUtils.applyEdits(document, firstDocumentEdits);
+				} catch (BadLocationException ex) {
+					LanguageServerPlugin.logError(ex);
+				}
+			});
+		});
+		return doc.isPresent();
 	}
 
 	/**
@@ -1167,7 +1268,7 @@ public final class LSPEclipseUtils {
 					contentTypes.add(contentType);
 				}
 			} catch (CoreException e) {
-				if (!(e.getCause() instanceof java.io.FileNotFoundException)) {
+				if (!(e.getCause() instanceof java.io.FileNotFoundException) && e.getStatus().getCode() != IResourceStatus.RESOURCE_NOT_FOUND) {
 					//the content type may be based on path or file name pattern or another subsystem via the ContentTypeManager
 					// so that is not an error condition
 					//otherwise, account for some other unknown CoreException

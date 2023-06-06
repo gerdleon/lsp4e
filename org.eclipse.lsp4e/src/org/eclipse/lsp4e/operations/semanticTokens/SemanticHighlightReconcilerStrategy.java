@@ -11,6 +11,7 @@ package org.eclipse.lsp4e.operations.semanticTokens;
 import java.net.URI;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Function;
@@ -25,6 +26,7 @@ import org.eclipse.jface.text.IRegion;
 import org.eclipse.jface.text.ITextListener;
 import org.eclipse.jface.text.ITextPresentationListener;
 import org.eclipse.jface.text.ITextViewer;
+import org.eclipse.jface.text.ITextViewerLifecycle;
 import org.eclipse.jface.text.TextPresentation;
 import org.eclipse.jface.text.TextViewer;
 import org.eclipse.jface.text.reconciler.DirtyRegion;
@@ -78,7 +80,7 @@ import org.eclipse.swt.custom.StyledText;
  * {@literal semanticHighlightReconciler.disabled} until fix is provided.
  */
 public class SemanticHighlightReconcilerStrategy
-		implements IReconcilingStrategy, IReconcilingStrategyExtension, ITextPresentationListener {
+		implements IReconcilingStrategy, IReconcilingStrategyExtension, ITextPresentationListener, ITextViewerLifecycle {
 
 	private final boolean disabled;
 
@@ -90,6 +92,8 @@ public class SemanticHighlightReconcilerStrategy
 
 	private SemanticTokensDataStreamProcessor semanticTokensDataStreamProcessor;
 
+	private boolean isInstalled;
+	
 	/**
 	 * Written in {@link this.class#applyTextPresentation(TextPresentation)}
 	 * applyTextPresentation and read in the lambda in
@@ -106,6 +110,7 @@ public class SemanticHighlightReconcilerStrategy
 	public SemanticHighlightReconcilerStrategy() {
 		IPreferenceStore store = LanguageServerPlugin.getDefault().getPreferenceStore();
 		disabled = store.getBoolean("semanticHighlightReconciler.disabled"); //$NON-NLS-1$
+		isInstalled = false;
 	}
 
 	/**
@@ -116,8 +121,9 @@ public class SemanticHighlightReconcilerStrategy
 	 * @param textViewer
 	 *            the viewer on which the reconciler is installed
 	 */
-	public void install(@NonNull final ITextViewer textViewer) {
-		if (disabled) {
+	@Override
+	public void install(final ITextViewer textViewer) {
+		if (disabled || isInstalled) {
 			return;
 		}
 		viewer = textViewer;
@@ -129,16 +135,19 @@ public class SemanticHighlightReconcilerStrategy
 			textViewerImpl.addTextPresentationListener(this);
 		}
 		viewer.addTextListener(styleRangeHolder);
+		isInstalled = true;
 	}
 
 	/**
 	 * Removes the reconciler from the text viewer it has previously been installed
 	 * on.
 	 */
+	@Override
 	public void uninstall() {
-		if (disabled) {
+		if (disabled || !isInstalled) {
 			return;
 		}
+		isInstalled = false; // Indicate that we're not installed or in the phase of deinstalling
 		cancelSemanticTokensFull();
 		semanticTokensDataStreamProcessor = null;
 		if (viewer instanceof final TextViewer textViewerImpl) {
@@ -172,7 +181,9 @@ public class SemanticHighlightReconcilerStrategy
 	private void saveStyle(final Pair<SemanticTokens, SemanticTokensLegend> pair) {
 		final SemanticTokens semanticTokens = pair.getFirst();
 		final SemanticTokensLegend semanticTokensLegend = pair.getSecond();
-		if (semanticTokens == null || semanticTokensLegend == null) {
+
+		// Skip any processing if not installed or at least one of the pair values is null
+		if (!isInstalled || semanticTokens == null || semanticTokensLegend == null) {
 			return;
 		}
 		List<Integer> dataStream = semanticTokens.getData();
@@ -222,6 +233,9 @@ public class SemanticHighlightReconcilerStrategy
 	}
 
 	private void invalidateTextPresentation(final Long documentTimestamp) {
+		if (!isInstalled) { // Skip any processing
+			return;
+		}
 		StyledText textWidget = viewer.getTextWidget();
 		textWidget.getDisplay().asyncExec(() -> {
 			if (!textWidget.isDisposed() && outdatedTextPresentation(documentTimestamp)) {
@@ -237,7 +251,7 @@ public class SemanticHighlightReconcilerStrategy
 	}
 
 	private void fullReconcile() {
-		if (disabled) {
+		if (disabled || !isInstalled) { // Skip any processing
 			return;
 		}
 		IDocument theDocument = document;
@@ -246,23 +260,25 @@ public class SemanticHighlightReconcilerStrategy
 			long modificationStamp = DocumentUtil.getDocumentModificationStamp(theDocument);
 			LanguageServerDocumentExecutor executor = LanguageServers.forDocument(theDocument)
 					.withFilter(this::hasSemanticTokensFull);
-			semanticTokensFullFuture = executor//
+			try {
+				semanticTokensFullFuture = executor//
 					.computeFirst((w, ls) -> ls.getTextDocumentService().semanticTokensFull(getSemanticTokensParams())//
 							.thenApply(semanticTokens -> new VersionedSemanticTokens(modificationStamp,
 									Pair.of(semanticTokens, getSemanticTokensLegend(w)), theDocument)));
 
-			try {
 				semanticTokensFullFuture.get() // background thread with cancellation support, no timeout needed
 						.ifPresent(versionedSemanticTokens -> {
 							versionedSemanticTokens.apply(this::saveStyle, this::invalidateTextPresentation);
 						});
 			} catch (ResponseErrorException | ExecutionException e) {
-				if (!CancellationUtil.isRequestCancelledException(e)) {
+				if (!CancellationUtil.isRequestCancelledException(e)) { // do not report error if the server has cancelled the request
 					LanguageServerPlugin.logError(e);
 				}
 			} catch (InterruptedException e) {
 				LanguageServerPlugin.logError(e);
 				Thread.currentThread().interrupt();
+			} catch (CancellationException e) {
+				// nothing to do, the client has cancelled the request because the document has been closed or a new request has been sent
 			}
 		}
 	}

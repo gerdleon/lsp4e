@@ -80,6 +80,9 @@ public final class Messages extends NLS {
 	public static String edit_CreateFile;
 	public static String workspaceSymbols;
 	public static String symbolsInFile;
+	public static String typeHierarchy;
+	public static String typeHierarchy_show_supertypes;
+	public static String typeHierarchy_show_subtypes;
 	public static String DocumentContentSynchronizer_OnSaveActionTimeout;
 	public static String DocumentContentSynchronizer_TimeoutMessage;
 	public static String DocumentContentSynchronizer_TimeoutThresholdMessage;

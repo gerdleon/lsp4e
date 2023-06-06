@@ -7,7 +7,7 @@
 	</parent>
 	<artifactId>org.eclipse.lsp4e</artifactId>
 	<packaging>eclipse-plugin</packaging>
-	<version>0.16.1-SNAPSHOT</version>
+	<version>0.17.0-SNAPSHOT</version>
 
 	<build>
 		<plugins>
@@ -26,7 +26,7 @@
 			<plugin>
 				<groupId>com.googlecode.maven-download-plugin</groupId>
 				<artifactId>download-maven-plugin</artifactId>
-				<version>1.6.8</version>
+				<version>1.7.0</version>
 				<executions>
 					<execution>
 						<id>fetch-highlight.min.js</id>
@@ -35,7 +35,7 @@
 							<goal>wget</goal>
 						</goals>
 						<configuration>
-							<url>https://unpkg.com/@highlightjs/cdn-assets@11.7.0/highlight.min.js</url>
+							<url>https://unpkg.com/@highlightjs/cdn-assets@11.8.0/highlight.min.js</url>
 							<unpack>false</unpack>
 							<overwrite>true</overwrite>
 							<skipCache>true</skipCache>
@@ -49,7 +49,7 @@
 							<goal>wget</goal>
 						</goals>
 						<configuration>
-							<url>https://unpkg.com/@highlightjs/cdn-assets@11.7.0/styles/default.min.css</url>
+							<url>https://unpkg.com/@highlightjs/cdn-assets@11.8.0/styles/default.min.css</url>
 							<unpack>false</unpack>
 							<overwrite>true</overwrite>
 							<skipCache>true</skipCache>
@@ -63,7 +63,7 @@
 							<goal>wget</goal>
 						</goals>
 						<configuration>
-							<url>https://unpkg.com/@highlightjs/cdn-assets@11.7.0/styles/dark.min.css</url>
+							<url>https://unpkg.com/@highlightjs/cdn-assets@11.8.0/styles/dark.min.css</url>
 							<unpack>false</unpack>
 							<overwrite>true</overwrite>
 							<skipCache>true</skipCache>

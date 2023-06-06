@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2016, 2018 Rogue Wave Software Inc. and others.
+ * Copyright (c) 2016, 2023 Rogue Wave Software Inc. and others.
  * This program and the accompanying materials are made
  * available under the terms of the Eclipse Public License 2.0
  * which is available at https://www.eclipse.org/legal/epl-2.0/
@@ -15,12 +15,12 @@ package org.eclipse.lsp4e.test;
 
 import static org.eclipse.lsp4e.LSPEclipseUtils.getDocument;
 import static org.eclipse.lsp4e.LSPEclipseUtils.getTextViewer;
-import static org.eclipse.lsp4e.LanguageServiceAccessor.getActiveLanguageServers;
 import static org.eclipse.lsp4e.LanguageServiceAccessor.getInitializedLanguageServers;
 import static org.eclipse.lsp4e.LanguageServiceAccessor.getLSPDocumentInfosFor;
 import static org.eclipse.lsp4e.LanguageServiceAccessor.getLSWrapper;
 import static org.eclipse.lsp4e.LanguageServiceAccessor.getLSWrappers;
 import static org.eclipse.lsp4e.LanguageServiceAccessor.getLanguageServers;
+import static org.eclipse.lsp4e.LanguageServiceAccessor.hasActiveLanguageServers;
 import static org.eclipse.lsp4e.test.TestUtils.createFile;
 import static org.eclipse.lsp4e.test.TestUtils.createProject;
 import static org.eclipse.lsp4e.test.TestUtils.createTempFile;
@@ -28,8 +28,8 @@ import static org.eclipse.lsp4e.test.TestUtils.createUniqueTestFile;
 import static org.eclipse.lsp4e.test.TestUtils.createUniqueTestFileMultiLS;
 import static org.eclipse.lsp4e.test.TestUtils.openEditor;
 import static org.eclipse.lsp4e.test.TestUtils.openTextViewer;
-import static org.eclipse.lsp4e.test.TestUtils.waitForCondition;
 import static org.eclipse.lsp4e.test.TestUtils.waitForAndAssertCondition;
+import static org.eclipse.lsp4e.test.TestUtils.waitForCondition;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -175,20 +175,19 @@ public class LanguageServiceAccessorTest {
 		assertNotEmpty(getInitializedLanguageServers(testFile1, MATCH_ALL));
 		assertNotEmpty(getInitializedLanguageServers(testFile2, MATCH_ALL));
 
-		var runningServers = getActiveLanguageServers(MATCH_ALL);
-		assertEquals(2, runningServers.size());
+		assertTrue(hasActiveLanguageServers(MATCH_ALL));
 
 		((AbstractTextEditor) editor1).close(false);
 		((AbstractTextEditor) editor2).close(false);
 
-		waitForCondition(5_000, () -> getActiveLanguageServers(MATCH_ALL).isEmpty());
-		assertEquals(0, getActiveLanguageServers(MATCH_ALL).size());
+		waitForCondition(5_000, () -> !hasActiveLanguageServers(MATCH_ALL));
+		assertFalse(hasActiveLanguageServers(MATCH_ALL));
 
 		editor1 = openEditor(testFile1);
 		assertNotEmpty(getInitializedLanguageServers(testFile1, MATCH_ALL));
 
-		waitForCondition(5_000, () -> getActiveLanguageServers(MATCH_ALL).size() > 0);
-		assertEquals(1, getActiveLanguageServers(MATCH_ALL).size());
+		waitForCondition(5_000, () -> hasActiveLanguageServers(MATCH_ALL));
+		assertTrue(hasActiveLanguageServers(MATCH_ALL));
 	}
 
 	@Test
@@ -358,19 +357,15 @@ public class LanguageServiceAccessorTest {
 		LanguageServerPlugin.getDefault().getPreferenceStore().setValue(prefKey, Boolean.FALSE.toString());
 
 		var disabledFile = createUniqueTestFile(project, "lspt-disabled", "");
-		assertFalse(getLSWrappers(disabledFile, MATCH_ALL).stream().filter(w -> w.serverDefinition.id.equals(serverId))
-				.findAny().isPresent());
+		assertFalse(getLSWrappers(disabledFile, MATCH_ALL).stream().anyMatch(w -> w.serverDefinition.id.equals(serverId)));
 
 		var enabledFile = createUniqueTestFile(project, "lspt-enabled", "");
-		assertTrue(getLSWrappers(enabledFile, MATCH_ALL).stream().filter(w -> w.serverDefinition.id.equals(serverId))
-				.findAny().isPresent());
+		assertTrue(getLSWrappers(enabledFile, MATCH_ALL).stream().anyMatch(w -> w.serverDefinition.id.equals(serverId)));
 
 		LanguageServerPlugin.getDefault().getPreferenceStore().setValue(prefKey, Boolean.TRUE.toString());
 
-		assertTrue(getLSWrappers(disabledFile, MATCH_ALL).stream().filter(w -> w.serverDefinition.id.equals(serverId))
-				.findAny().isPresent());
-		assertTrue(getLSWrappers(enabledFile, MATCH_ALL).stream().filter(w -> w.serverDefinition.id.equals(serverId))
-				.findAny().isPresent());
+		assertTrue(getLSWrappers(disabledFile, MATCH_ALL).stream().anyMatch(w -> w.serverDefinition.id.equals(serverId)));
+		assertTrue(getLSWrappers(enabledFile, MATCH_ALL).stream().anyMatch(w -> w.serverDefinition.id.equals(serverId)));
 	}
 
 	@Test

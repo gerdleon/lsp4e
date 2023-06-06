@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2016, 2022 Red Hat Inc. and others.
+ * Copyright (c) 2016, 2023 Red Hat Inc. and others.
  * This program and the accompanying materials are made
  * available under the terms of the Eclipse Public License 2.0
  * which is available at https://www.eclipse.org/legal/epl-2.0/
@@ -85,6 +85,7 @@ import org.eclipse.lsp4j.SelectionRangeRegistrationOptions;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.TextDocumentSyncKind;
 import org.eclipse.lsp4j.TextDocumentSyncOptions;
+import org.eclipse.lsp4j.TypeHierarchyRegistrationOptions;
 import org.eclipse.lsp4j.UnregistrationParams;
 import org.eclipse.lsp4j.WindowClientCapabilities;
 import org.eclipse.lsp4j.WorkspaceFolder;
@@ -155,7 +156,8 @@ public class LanguageServerWrapper {
 	private LanguageServer languageServer;
 	private LanguageClientImpl languageClient;
 	private ServerCapabilities serverCapabilities;
-	private Timer timer;
+	private final Timer timer = new Timer("Stop Language Server Task Processor"); //$NON-NLS-1$
+	private TimerTask stopTimerTask;
 	private AtomicBoolean stopping = new AtomicBoolean(false);
 
 	private final ExecutorService dispatcher;
@@ -251,6 +253,7 @@ public class LanguageServerWrapper {
 		}
 		if (this.initializeFuture == null) {
 			final URI rootURI = getRootURI();
+			this.launcherFuture = new CompletableFuture<>();
 			this.initializeFuture = CompletableFuture.supplyAsync(() -> {
 				if (LoggingStreamConnectionProviderProxy.shouldLog(serverDefinition.id)) {
 					this.lspStreamProvider = new LoggingStreamConnectionProviderProxy(
@@ -390,22 +393,28 @@ public class LanguageServerWrapper {
 		return this.launcherFuture != null && !this.launcherFuture.isDone() && !this.launcherFuture.isCancelled();
 	}
 
-	private void removeStopTimer() {
-		if (timer != null) {
-			timer.cancel();
-			timer = null;
+	private void removeStopTimerTask() {
+		synchronized (timer) {
+			if (stopTimerTask != null) {
+				stopTimerTask.cancel();
+				stopTimerTask = null;
+			}
 		}
 	}
 
-	private void startStopTimer() {
-		timer = new Timer("Stop Language Server Timer"); //$NON-NLS-1$
-
-		timer.schedule(new TimerTask() {
-			@Override
-			public void run() {
-				stop();
+	private void startStopTimerTask() {
+		synchronized (timer) {
+			if (stopTimerTask != null) {
+				stopTimerTask.cancel();
 			}
-		}, TimeUnit.SECONDS.toMillis(this.serverDefinition.lastDocumentDisconnectedTimeout));
+			stopTimerTask = new TimerTask() {
+				@Override
+				public void run() {
+					stop();
+				}
+			};
+			timer.schedule(stopTimerTask, TimeUnit.SECONDS.toMillis(this.serverDefinition.lastDocumentDisconnectedTimeout));
+		}
 	}
 
 	/**
@@ -423,7 +432,7 @@ public class LanguageServerWrapper {
 		if (alreadyStopping) {
 			return;
 		}
-		removeStopTimer();
+		removeStopTimerTask();
 		if (this.initializeFuture != null) {
 			this.initializeFuture.cancel(true);
 			this.initializeFuture = null;
@@ -476,43 +485,11 @@ public class LanguageServerWrapper {
 		FileBuffers.getTextFileBufferManager().removeFileBufferListener(fileBufferListener);
 	}
 
-	/**
-	 * @param file
-	 * @param document
-	 * @return null if not connection has happened, a future tracking the connection state otherwise
-	 * @throws IOException
-	 * @deprecated use {@link #connect(IDocument, IFile)}
-	 */
-	@Deprecated(forRemoval = true)
-	public @Nullable CompletableFuture<LanguageServer> connect(@NonNull IFile file, IDocument document)
-			throws IOException {
-		CompletableFuture<@NonNull LanguageServerWrapper> connect = connect(document, file);
-		if (connect != null) {
-			return connect.thenApply(theVoid -> languageServer);
-		}
-		return null;
-	}
-
 	public @Nullable CompletableFuture<@NonNull LanguageServerWrapper> connect(IDocument document, @NonNull IFile file)
 			throws IOException {
 		final URI uri = LSPEclipseUtils.toUri(file);
 		if (uri != null) {
 			return connect(uri, document);
-		}
-		return null;
-	}
-
-	/**
-	 * @param document
-	 * @return null if not connection has happened, a future tracking the connection state otherwise
-	 * @throws IOException
-	 * @deprecated use {@link #connect2}
-	 */
-	@Deprecated(forRemoval = true)
-	public @Nullable CompletableFuture<LanguageServer> connect(IDocument document) throws IOException {
-		CompletableFuture<LanguageServerWrapper> connect2 = connectDocument(document);
-		if (connect2 != null) {
-			return connect2.thenApply(theVoid -> languageServer);
 		}
 		return null;
 	}
@@ -588,7 +565,7 @@ public class LanguageServerWrapper {
 	 * @noreference internal so far
 	 */
 	private @Nullable CompletableFuture<@NonNull LanguageServerWrapper> connect(@NonNull URI uri, IDocument document) throws IOException {
-		removeStopTimer();
+		removeStopTimerTask();
 		if (this.connectedDocuments.containsKey(uri)) {
 			return CompletableFuture.completedFuture(this);
 		}
@@ -631,8 +608,7 @@ public class LanguageServerWrapper {
 		}
 		if (this.connectedDocuments.isEmpty()) {
 			if (this.serverDefinition.lastDocumentDisconnectedTimeout != 0) {
-				removeStopTimer();
-				startStopTimer();
+				startStopTimerTask();
 			} else {
 				stop();
 			}
@@ -668,11 +644,9 @@ public class LanguageServerWrapper {
 	 * Starts and returns the language server, regardless of if it is initialized.
 	 * If not in the UI Thread, will wait to return the initialized server.
 	 *
-	 * @deprecated use {@link #getInitializedServer()} instead.
 	 */
-	@Deprecated(forRemoval = true)
 	@Nullable
-	public LanguageServer getServer() {
+	protected LanguageServer getServer() {
 		CompletableFuture<LanguageServer> languagServerFuture = getInitializedServer();
 		if (Display.getCurrent() != null) { // UI Thread
 			return this.languageServer;
@@ -688,11 +662,9 @@ public class LanguageServerWrapper {
 	 * <p>If done in the UI stream, a job will be created
 	 * displaying that the server is being initialized</p>
 	 *
-	 * @deprecated use {@link LanguageServers#forDocument(IDocument)}
 	 */
-	@Deprecated(forRemoval = true) // will turn into a protected method
 	@NonNull
-	public CompletableFuture<LanguageServer> getInitializedServer() {
+	protected CompletableFuture<LanguageServer> getInitializedServer() {
 		try {
 			start();
 		} catch (IOException ex) {
@@ -850,7 +822,8 @@ public class LanguageServerWrapper {
 
 	void registerCapability(RegistrationParams params) {
 		params.getRegistrations().forEach(reg -> {
-			if ("workspace/didChangeWorkspaceFolders".equals(reg.getMethod())) { //$NON-NLS-1$
+			switch (reg.getMethod()) {
+			case "workspace/didChangeWorkspaceFolders":  //$NON-NLS-1$
 				Assert.isNotNull(serverCapabilities,
 						"Dynamic capability registration failed! Server not yet initialized?"); //$NON-NLS-1$
 				if (initiallySupportsWorkspaceFolders) {
@@ -864,7 +837,8 @@ public class LanguageServerWrapper {
 					addRegistration(reg, () -> setWorkspaceFoldersEnablement(false));
 					setWorkspaceFoldersEnablement(true);
 				}
-			} else if ("workspace/executeCommand".equals(reg.getMethod())) { //$NON-NLS-1$
+				break;
+			case "workspace/executeCommand": //$NON-NLS-1$
 				final var gson = new Gson(); // TODO? retrieve the GSon used by LS
 				ExecuteCommandOptions executeCommandOptions = gson.fromJson((JsonObject) reg.getRegisterOptions(),
 						ExecuteCommandOptions.class);
@@ -873,7 +847,8 @@ public class LanguageServerWrapper {
 					addRegistration(reg, () -> unregisterCommands(newCommands));
 					registerCommands(newCommands);
 				}
-			} else if ("textDocument/formatting".equals(reg.getMethod())) { //$NON-NLS-1$
+				break;
+			case "textDocument/formatting": //$NON-NLS-1$
 				Either<Boolean, DocumentFormattingOptions> documentFormattingProvider = serverCapabilities
 						.getDocumentFormattingProvider();
 				if (documentFormattingProvider == null || documentFormattingProvider.isLeft()) {
@@ -883,7 +858,8 @@ public class LanguageServerWrapper {
 					serverCapabilities.setDocumentFormattingProvider(documentFormattingProvider.getRight());
 					addRegistration(reg, () -> serverCapabilities.setDocumentFormattingProvider(documentFormattingProvider));
 				}
-			} else if ("textDocument/rangeFormatting".equals(reg.getMethod())) { //$NON-NLS-1$
+				break;
+			case "textDocument/rangeFormatting": //$NON-NLS-1$
 				Either<Boolean, DocumentRangeFormattingOptions> documentRangeFormattingProvider = serverCapabilities
 						.getDocumentRangeFormattingProvider();
 				if (documentRangeFormattingProvider == null || documentRangeFormattingProvider.isLeft()) {
@@ -895,15 +871,18 @@ public class LanguageServerWrapper {
 					addRegistration(reg, () -> serverCapabilities
 							.setDocumentRangeFormattingProvider(documentRangeFormattingProvider));
 				}
-			} else if ("textDocument/codeAction".equals(reg.getMethod())) { //$NON-NLS-1$
+				break;
+			case "textDocument/codeAction": //$NON-NLS-1$
 				final Either<Boolean, CodeActionOptions> beforeRegistration = serverCapabilities.getCodeActionProvider();
 				serverCapabilities.setCodeActionProvider(Boolean.TRUE);
 				addRegistration(reg, () -> serverCapabilities.setCodeActionProvider(beforeRegistration));
-			} else if ("workspace/symbol".equals(reg.getMethod())) { //$NON-NLS-1$
-				final Either<Boolean, WorkspaceSymbolOptions> beforeRegistration = serverCapabilities.getWorkspaceSymbolProvider();
+				break;
+			case "workspace/symbol": //$NON-NLS-1$
+				final Either<Boolean, WorkspaceSymbolOptions> workspaceSymbolBeforeRegistration = serverCapabilities.getWorkspaceSymbolProvider();
 				serverCapabilities.setWorkspaceSymbolProvider(Boolean.TRUE);
-				addRegistration(reg, () -> serverCapabilities.setWorkspaceSymbolProvider(beforeRegistration));
-			} else if ("textDocument/selectionRange".equals(reg.getMethod())) { //$NON-NLS-1$
+				addRegistration(reg, () -> serverCapabilities.setWorkspaceSymbolProvider(workspaceSymbolBeforeRegistration));
+				break;
+			case "textDocument/selectionRange": //$NON-NLS-1$
 				Either<Boolean, SelectionRangeRegistrationOptions> selectionRangeProvider = serverCapabilities
 						.getSelectionRangeProvider();
 				if (selectionRangeProvider == null || selectionRangeProvider.isLeft()) {
@@ -913,8 +892,13 @@ public class LanguageServerWrapper {
 					serverCapabilities.setSelectionRangeProvider(selectionRangeProvider.getRight());
 					addRegistration(reg, () -> serverCapabilities.setSelectionRangeProvider(selectionRangeProvider));
 				}
-			}
-		});
+				break;
+			case "textDocument/typeHierarchy": //$NON-NLS-1$
+				final Either<Boolean, TypeHierarchyRegistrationOptions> typeHierarchyBeforeRegistration = serverCapabilities.getTypeHierarchyProvider();
+				serverCapabilities.setTypeHierarchyProvider(Boolean.TRUE);
+				addRegistration(reg, () -> serverCapabilities.setTypeHierarchyProvider(typeHierarchyBeforeRegistration));
+				break;
+		}});
 	}
 
 	private void addRegistration(@NonNull Registration reg, @NonNull Runnable unregistrationHandler) {

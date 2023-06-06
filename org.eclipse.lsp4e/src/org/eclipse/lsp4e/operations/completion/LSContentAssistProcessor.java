@@ -44,15 +44,18 @@ import org.eclipse.lsp4e.LSPEclipseUtils;
 import org.eclipse.lsp4e.LanguageServerPlugin;
 import org.eclipse.lsp4e.LanguageServerWrapper;
 import org.eclipse.lsp4e.LanguageServers;
+import org.eclipse.lsp4e.internal.CancellationUtil;
 import org.eclipse.lsp4e.ui.Messages;
 import org.eclipse.lsp4e.ui.UI;
 import org.eclipse.lsp4j.CompletionItem;
+import org.eclipse.lsp4j.CompletionItemDefaults;
 import org.eclipse.lsp4j.CompletionList;
 import org.eclipse.lsp4j.CompletionOptions;
 import org.eclipse.lsp4j.CompletionParams;
 import org.eclipse.lsp4j.SignatureHelpOptions;
 import org.eclipse.lsp4j.SignatureHelpParams;
 import org.eclipse.lsp4j.SignatureInformation;
+import org.eclipse.lsp4j.jsonrpc.ResponseErrorException;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.ui.texteditor.ITextEditor;
 
@@ -109,8 +112,10 @@ public class LSContentAssistProcessor implements IContentAssistProcessor {
 					.collectAll((w, ls) -> ls.getTextDocumentService().completion(param)
 							.thenAccept(completion -> proposals.addAll(toProposals(document, offset, completion, w))));
 			this.completionLanguageServersFuture.get();
-		} catch (ExecutionException e) {
-			LanguageServerPlugin.logError(e);
+		} catch (ResponseErrorException | ExecutionException e) {
+			if (!CancellationUtil.isRequestCancelledException(e)) { // do not report error if the server has cancelled the request
+				LanguageServerPlugin.logError(e);
+			}
 			this.errorMessage = createErrorMessage(offset, e);
 			return createErrorProposal(offset, e);
 		} catch (InterruptedException e) {
@@ -202,11 +207,12 @@ public class LSContentAssistProcessor implements IContentAssistProcessor {
 		if (completionList == null) {
 			return Collections.emptyList();
 		}
+		CompletionItemDefaults defaults = completionList.map(o -> null, CompletionList::getItemDefaults);
 		List<CompletionItem> items = completionList.isLeft() ? completionList.getLeft() : completionList.getRight().getItems();
 		boolean isIncomplete = completionList.isRight() ? completionList.getRight().isIncomplete() : false;
 		return items.stream() //
 				.filter(Objects::nonNull)
-				.map(item -> new LSCompletionProposal(document, offset, item,
+				.map(item -> new LSCompletionProposal(document, offset, item, defaults,
 						languageServerWrapper, isIncomplete))
 				.filter(proposal -> proposal.validate(document, offset, null))
 				.map(ICompletionProposal.class::cast)
@@ -239,8 +245,10 @@ public class LSContentAssistProcessor implements IContentAssistProcessor {
 								}
 							}));
 			this.contextInformationLanguageServersFuture.get(CONTEXT_INFORMATION_TIMEOUT, TimeUnit.MILLISECONDS);
-		} catch (ExecutionException e) {
-			LanguageServerPlugin.logError(e);
+		} catch (ResponseErrorException | ExecutionException e) {
+			if (!CancellationUtil.isRequestCancelledException(e)) { // do not report error if the server has cancelled the request
+				LanguageServerPlugin.logError(e);
+			}
 			return new IContextInformation[] { /* TODO? show error in context information */ };
 		} catch (InterruptedException e) {
 			LanguageServerPlugin.logError(e);

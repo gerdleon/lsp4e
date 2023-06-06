@@ -12,7 +12,7 @@
  *******************************************************************************/
 package org.eclipse.lsp4e.test;
 
-import static org.eclipse.lsp4e.LanguageServiceAccessor.getActiveLanguageServers;
+import static org.eclipse.lsp4e.LanguageServiceAccessor.hasActiveLanguageServers;
 import static org.eclipse.lsp4e.test.TestUtils.createUniqueTestFile;
 import static org.eclipse.lsp4e.test.TestUtils.openEditor;
 import static org.eclipse.lsp4e.test.TestUtils.waitForCondition;
@@ -32,7 +32,6 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
-import java.util.stream.Collectors;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IProject;
@@ -199,7 +198,7 @@ public class LanguageServersTest {
 
 		assertEquals("HoverContent1 should have returned first, independently", "HoverContent1", first);
 
-		List<String> hovers = result.stream().map(CompletableFuture::join).collect(Collectors.toList());
+		List<String> hovers = result.stream().map(CompletableFuture::join).toList();
 
 		assertTrue(hovers.contains("HoverContent1"));
 		assertTrue(hovers.contains("HoverContent2"));
@@ -751,7 +750,7 @@ public class LanguageServersTest {
 		((AbstractTextEditor) editor1).close(false);
 		((AbstractTextEditor) editor2).close(false);
 
-		waitForCondition(5_000, () -> getActiveLanguageServers(MATCH_ALL).isEmpty());
+		waitForCondition(5_000, () -> !hasActiveLanguageServers(MATCH_ALL));
 
 		serverCounter.set(0);
 		final List<String> serversForProject2 = LanguageServers.forProject(project).excludeInactive().collectAll(ls -> CompletableFuture.completedFuture("Server" + serverCounter.incrementAndGet())).join();
