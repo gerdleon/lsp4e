@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2016, 2022 Red Hat Inc. and others.
+ * Copyright (c) 2016, 2024 Red Hat Inc. and others.
  * This program and the accompanying materials are made
  * available under the terms of the Eclipse Public License 2.0
  * which is available at https://www.eclipse.org/legal/epl-2.0/
@@ -70,9 +70,12 @@ import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.Adapters;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.IPath;
+import org.eclipse.core.runtime.IProgressMonitor;
 import org.eclipse.core.runtime.NullProgressMonitor;
+import org.eclipse.core.runtime.OperationCanceledException;
 import org.eclipse.core.runtime.Path;
 import org.eclipse.core.runtime.Platform;
+import org.eclipse.core.runtime.Status;
 import org.eclipse.core.runtime.content.IContentType;
 import org.eclipse.core.runtime.content.IContentTypeManager;
 import org.eclipse.jdt.annotation.NonNull;
@@ -93,8 +96,11 @@ import org.eclipse.lsp4e.ui.Messages;
 import org.eclipse.lsp4e.ui.UI;
 import org.eclipse.lsp4j.CallHierarchyPrepareParams;
 import org.eclipse.lsp4j.Color;
+import org.eclipse.lsp4j.CompletionContext;
 import org.eclipse.lsp4j.CompletionParams;
+import org.eclipse.lsp4j.CompletionTriggerKind;
 import org.eclipse.lsp4j.CreateFile;
+import org.eclipse.lsp4j.DeclarationParams;
 import org.eclipse.lsp4j.DefinitionParams;
 import org.eclipse.lsp4j.DeleteFile;
 import org.eclipse.lsp4j.DiagnosticSeverity;
@@ -118,16 +124,22 @@ import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.eclipse.lsp4j.WorkspaceEdit;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
+import org.eclipse.ltk.core.refactoring.Change;
 import org.eclipse.ltk.core.refactoring.CompositeChange;
 import org.eclipse.ltk.core.refactoring.DocumentChange;
 import org.eclipse.ltk.core.refactoring.PerformChangeOperation;
+import org.eclipse.ltk.core.refactoring.Refactoring;
 import org.eclipse.ltk.core.refactoring.RefactoringCore;
+import org.eclipse.ltk.core.refactoring.RefactoringStatus;
 import org.eclipse.ltk.core.refactoring.resource.DeleteResourceChange;
+import org.eclipse.ltk.core.refactoring.resource.MoveRenameResourceChange;
+import org.eclipse.ltk.core.refactoring.resource.RenameResourceChange;
+import org.eclipse.ltk.ui.refactoring.RefactoringWizard;
+import org.eclipse.ltk.ui.refactoring.RefactoringWizardOpenOperation;
 import org.eclipse.mylyn.wikitext.markdown.MarkdownLanguage;
 import org.eclipse.mylyn.wikitext.parser.MarkupParser;
 import org.eclipse.swt.graphics.RGB;
 import org.eclipse.swt.graphics.RGBA;
-import org.eclipse.swt.widgets.Display;
 import org.eclipse.text.edits.MalformedTreeException;
 import org.eclipse.text.edits.MultiTextEdit;
 import org.eclipse.text.edits.ReplaceEdit;
@@ -152,6 +164,8 @@ import org.eclipse.ui.texteditor.AbstractTextEditor;
 import org.eclipse.ui.texteditor.IDocumentProvider;
 import org.eclipse.ui.texteditor.ITextEditor;
 
+import com.google.common.primitives.Chars;
+
 /**
  * Some utility methods to convert between Eclipse and LS-API types
  */
@@ -174,7 +188,7 @@ public final class LSPEclipseUtils {
 		// this class shouldn't be instantiated
 	}
 
-	public static Position toPosition(int offset, IDocument document) throws BadLocationException {
+	public static @NonNull Position toPosition(int offset, IDocument document) throws BadLocationException {
 		final var res = new Position();
 		res.setLine(document.getLineOfOffset(offset));
 		res.setCharacter(offset - document.getLineInformationOfOffset(offset).getOffset());
@@ -217,10 +231,25 @@ public final class LSPEclipseUtils {
 		}
 	}
 
-	public static CompletionParams toCompletionParams(URI fileUri, int offset, IDocument document)
+	public static CompletionParams toCompletionParams(URI fileUri, int offset, IDocument document, char[] completionTriggerChars)
 			throws BadLocationException {
 		Position start = toPosition(offset, document);
 		final var param = new CompletionParams();
+		if (document.getLength() > 0) {
+			try {
+				int positionCharacterOffset = offset > 0 ? offset-1 : offset;
+				String positionCharacter = document.get(positionCharacterOffset, 1);
+				if (Chars.contains(completionTriggerChars, positionCharacter.charAt(0))) {
+					param.setContext(new CompletionContext(CompletionTriggerKind.TriggerCharacter, positionCharacter));
+				} else {
+					// According to LSP 3.17 specification: the triggerCharacter in CompletionContext is undefined if
+					// triggerKind != CompletionTriggerKind.TriggerCharacter
+					param.setContext(new CompletionContext(CompletionTriggerKind.Invoked));
+				}
+			} catch (BadLocationException e) {
+				LanguageServerPlugin.logError(e);
+			}
+		}
 		param.setPosition(start);
 		param.setTextDocument(toTextDocumentIdentifier(fileUri));
 		return param;
@@ -287,6 +316,10 @@ public final class LSPEclipseUtils {
 		return toTextDocumentPositionParamsCommon(new DefinitionParams(), params);
 	}
 
+	public static DeclarationParams toDeclarationParams(TextDocumentPositionParams params) {
+		return toTextDocumentPositionParamsCommon(new DeclarationParams(), params);
+	}
+
 	public static TypeDefinitionParams toTypeDefinitionParams(TextDocumentPositionParams params) {
 		return toTextDocumentPositionParamsCommon(new TypeDefinitionParams(), params);
 	}
@@ -336,7 +369,7 @@ public final class LSPEclipseUtils {
 
 	}
 
-	private static ITextFileBuffer toBuffer(IDocument document) {
+	public static ITextFileBuffer toBuffer(IDocument document) {
 		ITextFileBufferManager bufferManager = FileBuffers.getTextFileBufferManager();
 		if (bufferManager == null)
 			return null;
@@ -502,10 +535,25 @@ public final class LSPEclipseUtils {
 					// Must be a bad location: we bail out to avoid corrupting the document.
 					throw new BadLocationException("Invalid location information found applying edits"); //$NON-NLS-1$
 				}
-
 				// check if that edit would actually change the document
-				if (!document.get(offset, length).equals(textEdit.getNewText()))
-					edit.addChild(new ReplaceEdit(offset, length, textEdit.getNewText()));
+				var newText = textEdit.getNewText();
+				if (!document.get(offset, length).equals(newText)) {
+					if (newText.length() > 0) {
+						var zeroBasedDocumentLines = Math.max(0, document.getNumberOfLines() - 1);
+						var endLine = textEdit.getRange().getEnd().getLine();
+						endLine = endLine > zeroBasedDocumentLines ? zeroBasedDocumentLines : endLine;
+						// Do not split "\r\n" line ending:
+						if ("\r\n".equals(document.getLineDelimiter(endLine))) { //$NON-NLS-1$;
+							// if last char in the newText is a carriage return:
+							if ('\r' == newText.charAt(newText.length()-1) && offset + length < document.getLength()) {
+								// replace the whole line:
+								newText = newText + '\n';
+								length++;
+							}
+						}
+					}
+					edit.addChild(new ReplaceEdit(offset, length, newText));
+				}
 			}
 		}
 
@@ -574,7 +622,7 @@ public final class LSPEclipseUtils {
 	}
 
 	@Nullable
-	private static IDocument getDocument(URI uri) {
+	public static IDocument getDocument(URI uri) {
 		if (uri == null) {
 			return null;
 		}
@@ -873,7 +921,7 @@ public final class LSPEclipseUtils {
 
 	/**
 	 * Applies a workspace edit. It does simply change the underlying documents if all are currently
-	 * open in an editor, otherwise, it performs a Refactoring that will result on filesystem changes.
+	 * open in an editor, otherwise, it performs a refactoring that will result on filesystem changes.
 	 *
 	 * @param wsEdit
 	 * @param label
@@ -883,35 +931,86 @@ public final class LSPEclipseUtils {
 			return;
 		}
 
-		if (applyWorkspaceEditIfSingleOpenFile(wsEdit)) {
-			return;
-		}
-
-		// multiple documents or some ResourceChanges => create a refactoring
 		String name = label == null ? DEFAULT_LABEL : label;
-		Map<URI, Range> changedURIs = new HashMap<>();
-		CompositeChange change = toCompositeChange(wsEdit, name, changedURIs);
-		final var changeOperation = new PerformChangeOperation(change);
-		changeOperation.setUndoManager(RefactoringCore.getUndoManager(), name);
-		try {
-			ResourcesPlugin.getWorkspace().run(changeOperation, new NullProgressMonitor());
 
-			// Open the resource in editor if there is the only one URI
-			if (changedURIs.size() == 1) {
-				changedURIs.keySet().stream().findFirst().ifPresent(uri -> {
-					// Select the only start position of the range or the document start
-					Range range = changedURIs.get(uri);
-					Position start = range.getStart() != null ? range.getStart() : new Position(0, 0);
-					if (Display.getCurrent() != null) {
-						open(uri.toString(), new Range(start, start));
-					} else {
-						UI.getDisplay().asyncExec(() -> open(uri.toString(), new Range(start, start)));
-					}
-				});
+		if (wsEdit.getChangeAnnotations() != null && wsEdit.getChangeAnnotations().values().stream().anyMatch(ca -> ca.getNeedsConfirmation() != null && ca.getNeedsConfirmation())) {
+			runRefactorWizardOperation(toCompositeChange(wsEdit, name));
+		} else {
+
+			if (applyWorkspaceEditIfSingleOpenFile(wsEdit)) {
+				return;
 			}
-		} catch (CoreException e) {
-			LanguageServerPlugin.logError(e);
+
+			// multiple documents or some ResourceChanges => create a refactoring
+			Map<URI, Range> changedURIs = new HashMap<>();
+			CompositeChange change = toCompositeChange(wsEdit, name, changedURIs);
+
+			final var changeOperation = new PerformChangeOperation(change);
+			changeOperation.setUndoManager(RefactoringCore.getUndoManager(), name);
+			try {
+				ResourcesPlugin.getWorkspace().run(changeOperation, new NullProgressMonitor());
+
+				// Open the resource in editor if there is the only one URI
+				if (changedURIs.size() == 1) {
+					changedURIs.keySet().stream().findFirst().ifPresent(uri -> {
+						// Select the only start position of the range or the document start
+						Range range = changedURIs.get(uri);
+						Position start = range.getStart() != null ? range.getStart() : new Position(0, 0);
+						UI.runOnUIThread(() -> open(uri.toString(), new Range(start, start)));
+					});
+				}
+			} catch (CoreException e) {
+				LanguageServerPlugin.logError(e);
+			}
 		}
+
+	}
+
+	private static void runRefactorWizardOperation(Change change) {
+		Refactoring refactoring = new Refactoring() {
+
+			@Override
+			public String getName() {
+				return change.getName();
+			}
+
+			@Override
+			public RefactoringStatus checkInitialConditions(IProgressMonitor pm)
+					throws CoreException, OperationCanceledException {
+				return RefactoringStatus.create(Status.OK_STATUS);
+			}
+
+			@Override
+			public RefactoringStatus checkFinalConditions(IProgressMonitor pm)
+					throws CoreException, OperationCanceledException {
+				return RefactoringStatus.create(Status.OK_STATUS);
+			}
+
+			@Override
+			public Change createChange(IProgressMonitor pm) throws CoreException, OperationCanceledException {
+				return change;
+			}
+
+		};
+		RefactoringWizard wizard = new RefactoringWizard(refactoring,
+				RefactoringWizard.DIALOG_BASED_USER_INTERFACE |
+				RefactoringWizard.NO_BACK_BUTTON_ON_STATUS_DIALOG
+		) {
+
+
+			@Override
+			protected void addUserInputPages() {
+				//no inputs required
+			}
+
+		};
+		UI.runOnUIThread(() -> {
+			try {
+				new RefactoringWizardOpenOperation(wizard).run(UI.getActiveShell(), change.getName());
+			} catch (InterruptedException e) {
+				LanguageServerPlugin.logError(e);
+			}
+		});
 	}
 
 	/**
@@ -998,14 +1097,14 @@ public final class LSPEclipseUtils {
 		if (documentChanges != null) {
 			// documentChanges are present, the latter are preferred over changes
 			// see specification at
-			// https://github.com/Microsoft/language-server-protocol/blob/master/protocol.md#workspaceedit
+			// https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#workspaceEdit
 			documentChanges.stream().forEach(action -> {
 				if (action.isLeft()) {
 					TextDocumentEdit edit = action.getLeft();
 					VersionedTextDocumentIdentifier id = edit.getTextDocument();
 					URI uri = URI.create(id.getUri());
 					List<TextEdit> textEdits = edit.getEdits();
-					change.addAll(toChanges(uri, textEdits));
+					change.add(toChanges(uri, textEdits));
 					collectChangedURI(uri, textEdits, collector);
 				} else if (action.isRight()) {
 					ResourceOperation resourceOperation = action.getRight();
@@ -1038,6 +1137,20 @@ public final class LSPEclipseUtils {
 						URI newURI = URI.create(rename.getNewUri());
 						IFile oldFile = getFileHandle(oldURI);
 						IFile newFile = getFileHandle(newURI);
+
+						// If both files are within Eclipse workspace utilize Eclipse ltk MoveRenameResourceChange and RenameResourceChange
+						if (oldFile != null && oldFile.exists() && oldFile.getParent() != null
+								&& newFile != null && newFile.getParent() != null && newFile.getParent().exists()) {
+							if (!newFile.exists() || rename.getOptions().getOverwrite()) {
+								if (oldFile.getParent().equals(newFile.getParent())) {
+									change.add(new RenameResourceChange(oldFile.getFullPath(), newFile.getName()));
+								} else {
+									change.add(new MoveRenameResourceChange(oldFile, newFile.getParent(), newFile.getName()));
+								}
+								return;
+							}
+						}
+
 						DeleteResourceChange removeNewFile = null;
 						if (newFile != null && newFile.exists()) {
 							if (rename.getOptions().getOverwrite()) {
@@ -1078,7 +1191,7 @@ public final class LSPEclipseUtils {
 				for (java.util.Map.Entry<String, List<TextEdit>> edit : changes.entrySet()) {
 					URI uri = URI.create(edit.getKey());
 					List<TextEdit> textEdits = edit.getValue();
-					change.addAll(toChanges(uri, textEdits));
+					change.add(toChanges(uri, textEdits));
 					collectChangedURI(uri, textEdits, collector);
 				}
 			}
@@ -1087,9 +1200,9 @@ public final class LSPEclipseUtils {
 	}
 
 	private static final Range DEFAULT_RANGE = new Range(new Position(0, 0), new Position(0, 0));
-	/*
+
+	/**
 	 * Reports the URI and the start range of the given text edit, if exists.
-	 *
 	 *
 	 * @param textEdits A list of textEdits sorted in reversed order
 	 */
@@ -1135,13 +1248,15 @@ public final class LSPEclipseUtils {
 	 * @param uri
 	 *            document URI to update
 	 * @param textEdits
-	 *            LSP text edits
+	 *            CompositeChange with LSP text edits
 	 */
-	private static LSPTextChange[] toChanges(URI uri, List<TextEdit> textEdits) {
+	private static Change toChanges(URI uri, List<TextEdit> textEdits) {
 		Collections.sort(textEdits, Comparator.comparing(edit -> edit.getRange().getStart(),
 				Comparator.comparingInt(Position::getLine).thenComparingInt(Position::getCharacter).reversed()));
-		return textEdits.stream().map(te -> new LSPTextChange("LSP Text Edit", uri, te)) //$NON-NLS-1$
+		LSPTextChange[] changes = textEdits.stream().map(te -> new LSPTextChange("Line: %d".formatted(te.getRange().getStart().getLine() + 1), uri, te)) //$NON-NLS-1$
 				.toArray(LSPTextChange[]::new);
+		CompositeChange cc = new CompositeChange(Paths.get(uri).toString(), changes);
+		return cc;
 	}
 
 	public static URI toUri(IPath absolutePath) {
@@ -1161,7 +1276,8 @@ public final class LSPEclipseUtils {
 	}
 
 	@Nullable public static URI toUri(@NonNull IFileBuffer buffer) {
-		IFile res = ResourcesPlugin.getWorkspace().getRoot().getFile(buffer.getLocation());
+		IPath bufferLocation = buffer.getLocation();
+		IFile res = bufferLocation != null && bufferLocation.segmentCount() > 1 ? ResourcesPlugin.getWorkspace().getRoot().getFile(buffer.getLocation()) : null;
 		if (res != null) {
 			URI uri = toUri(res);
 			if (uri != null) {
@@ -1408,13 +1524,15 @@ public final class LSPEclipseUtils {
 			return toUri(fileEditorInput.getFile());
 		}
 		if (editorInput instanceof IURIEditorInput uriEditorInput) {
-			return toUri(Path.fromPortableString((uriEditorInput.getURI()).getPath()));
+			URI uri = uriEditorInput.getURI();
+			return uri.getPath() != null ? toUri(Path.fromPortableString(uri.getPath())) : uri;
 		}
 		return null;
 	}
 
 	public static URI toUri(String uri) {
-		return toUri(Path.fromPortableString(URI.create(uri).getPath()));
+		URI initialUri = URI.create(uri);
+		return FILE_SCHEME.equals(initialUri.getScheme()) ? toUri(Path.fromPortableString(initialUri.getPath())) : initialUri;
 	}
 
 	/**

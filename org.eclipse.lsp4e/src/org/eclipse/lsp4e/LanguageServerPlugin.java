@@ -21,6 +21,11 @@ import org.osgi.framework.BundleContext;
 
 public class LanguageServerPlugin extends AbstractUIPlugin {
 
+	/** Job family identifier for the "background update markers from diagnostics" job. */
+	public static final Object FAMILY_UPDATE_MARKERS = new Object();
+	/** Job family identifier for the "initialize language server" job. */
+	public static final Object FAMILY_INITIALIZE_LANGUAGE_SERVER = new Object();
+
 	public static final String PLUGIN_ID = "org.eclipse.lsp4e"; //$NON-NLS-1$
 
 	public static final boolean DEBUG = Boolean.parseBoolean(Platform.getDebugOption("org.eclipse.lsp4e/debug")); //$NON-NLS-1$
@@ -65,7 +70,10 @@ public class LanguageServerPlugin extends AbstractUIPlugin {
 	 *            The exception through which we noticed the error
 	 */
 	public static void logError(final Throwable thr) {
-		getDefault().getLog().log(new Status(IStatus.ERROR, PLUGIN_ID, 0, thr.getMessage(), thr));
+		LanguageServerPlugin plugin = getDefault();
+		if (plugin != null) {
+			plugin.getLog().log(new Status(IStatus.ERROR, PLUGIN_ID, 0, thr.getMessage(), thr));
+		}
 	}
 
 	/**
@@ -77,7 +85,10 @@ public class LanguageServerPlugin extends AbstractUIPlugin {
 	 *            The exception through which we noticed the error
 	 */
 	public static void logError(final String message, final Throwable thr) {
-		getDefault().getLog().log(new Status(IStatus.ERROR, PLUGIN_ID, 0, message, thr));
+		LanguageServerPlugin plugin = getDefault();
+		if (plugin != null) {
+			plugin.getLog().log(new Status(IStatus.ERROR, PLUGIN_ID, 0, message, thr));
+		}
 	}
 
 	/**
@@ -86,7 +97,10 @@ public class LanguageServerPlugin extends AbstractUIPlugin {
 	 * @param message
 	 */
 	public static void logInfo(final String message) {
-		getDefault().getLog().log(new Status(IStatus.INFO, PLUGIN_ID, 0, message, null));
+		LanguageServerPlugin plugin = getDefault();
+		if (plugin != null) {
+			plugin.getLog().log(new Status(IStatus.INFO, PLUGIN_ID, 0, message, null));
+		}
 	}
 
 	/**
@@ -98,7 +112,10 @@ public class LanguageServerPlugin extends AbstractUIPlugin {
 	 *            The exception through which we noticed the warning
 	 */
 	public static void logWarning(final String message, final Throwable thr) {
-		getDefault().getLog().log(new Status(IStatus.WARNING, PLUGIN_ID, 0, message, thr));
+		LanguageServerPlugin plugin = getDefault();
+		if (plugin != null) {
+			plugin.getLog().log(new Status(IStatus.WARNING, PLUGIN_ID, 0, message, thr));
+		}
 	}
 
 }

@@ -18,7 +18,6 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 import org.eclipse.core.commands.ExecutionEvent;
-import org.eclipse.core.commands.ExecutionException;
 import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.jface.text.ITextSelection;
@@ -35,11 +34,7 @@ import org.eclipse.lsp4j.SelectionRange;
 import org.eclipse.lsp4j.SelectionRangeParams;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
-import org.eclipse.swt.custom.CaretEvent;
-import org.eclipse.swt.custom.CaretListener;
 import org.eclipse.swt.custom.StyledText;
-import org.eclipse.ui.IEditorPart;
-import org.eclipse.ui.handlers.HandlerUtil;
 import org.eclipse.ui.texteditor.ITextEditor;
 
 /**
@@ -57,7 +52,7 @@ public abstract class LSPSelectionRangeAbstractHandler extends LSPDocumentAbstra
 	 */
 	protected static class SelectionRangeHandler {
 
-		public static enum Direction {
+		public enum Direction {
 			UP, DOWN;
 		}
 
@@ -87,14 +82,10 @@ public abstract class LSPSelectionRangeAbstractHandler extends LSPDocumentAbstra
 		public SelectionRangeHandler(StyledText styledText) {
 			this.styledText = styledText;
 			styledText.setData(KEY, this);
-			styledText.addCaretListener(new CaretListener() {
-
-				@Override
-				public void caretMoved(CaretEvent arg0) {
-					if (!updating) {
-						// The cursor location changed, reset the cached selection range.
-						root = null;
-					}
+			styledText.addCaretListener(event -> {
+				if (!updating) {
+					// The cursor location changed, reset the cached selection range.
+					root = null;
 				}
 			});
 		}
@@ -153,55 +144,51 @@ public abstract class LSPSelectionRangeAbstractHandler extends LSPDocumentAbstra
 	}
 
 	@Override
-	public Object execute(ExecutionEvent event) throws ExecutionException {
-		IEditorPart part = HandlerUtil.getActiveEditor(event);
-		if (part instanceof ITextEditor textEditor) {
-			final ISelectionProvider provider = textEditor.getSelectionProvider();
-			if (provider == null) {
-				return null;
-			}
-			ISelection sel = provider.getSelection();
-			ITextViewer viewer = textEditor.getAdapter(ITextViewer.class);
-			if (viewer == null) {
-				return null;
-			}
-			StyledText styledText = viewer.getTextWidget();
-			if (styledText == null) {
-				return null;
-			}
+	protected void execute(ExecutionEvent event, ITextEditor textEditor) {
+		final ISelectionProvider provider = textEditor.getSelectionProvider();
+		if (provider == null) {
+			return;
+		}
+		ISelection sel = provider.getSelection();
+		ITextViewer viewer = textEditor.getAdapter(ITextViewer.class);
+		if (viewer == null) {
+			return;
+		}
+		StyledText styledText = viewer.getTextWidget();
+		if (styledText == null) {
+			return;
+		}
 
-			if (sel instanceof ITextSelection textSelection && !textSelection.isEmpty()) {
-				IDocument document = LSPEclipseUtils.getDocument(textEditor);
-				if (document != null) {
-					LanguageServerDocumentExecutor executor = LanguageServers.forDocument(document)
-							.withCapability(ServerCapabilities::getSelectionRangeProvider);
-					if (executor.anyMatching()) {
-						// It exists a language server which supports 'textDocument/SelectionRange' LSP
-						// operation.
-						SelectionRangeHandler.Direction direction = getDirection();
-						// Get the SelectionRangeHandler instance of the editor.
-						SelectionRangeHandler handler = SelectionRangeHandler.getSelectionRangeHandler(styledText);
-						if (handler.isDirty()) {
-							// Collect the selection ranges for cursor location
-							collectSelectionRanges(document, textSelection.getOffset()).thenApply(result -> {
-								if (result.isPresent()) {
-									List<SelectionRange> ranges = result.get();
-									SelectionRange root = ranges.get(0);
-									// Update handler with the collected selection range from he language server
-									handler.setRoot(root);
-									// Update Eclipse selection by using the collected LSP SelectionRage
-									handler.updateSelection(provider, document, direction);
-								}
-								return null;
-							});
-						} else {
-							handler.updateSelection(provider, document, direction);
-						}
+		if (sel instanceof ITextSelection textSelection && !textSelection.isEmpty()) {
+			IDocument document = LSPEclipseUtils.getDocument(textEditor);
+			if (document != null) {
+				LanguageServerDocumentExecutor executor = LanguageServers.forDocument(document)
+						.withCapability(ServerCapabilities::getSelectionRangeProvider);
+				if (executor.anyMatching()) {
+					// It exists a language server which supports 'textDocument/SelectionRange' LSP
+					// operation.
+					SelectionRangeHandler.Direction direction = getDirection();
+					// Get the SelectionRangeHandler instance of the editor.
+					SelectionRangeHandler handler = SelectionRangeHandler.getSelectionRangeHandler(styledText);
+					if (handler.isDirty()) {
+						// Collect the selection ranges for cursor location
+						collectSelectionRanges(document, textSelection.getOffset()).thenApply(result -> {
+							if (result.isPresent()) {
+								List<SelectionRange> ranges = result.get();
+								SelectionRange root = ranges.get(0);
+								// Update handler with the collected selection range from he language server
+								handler.setRoot(root);
+								// Update Eclipse selection by using the collected LSP SelectionRage
+								handler.updateSelection(provider, document, direction);
+							}
+							return null;
+						});
+					} else {
+						handler.updateSelection(provider, document, direction);
 					}
 				}
 			}
 		}
-		return null;
 	}
 
 	/**

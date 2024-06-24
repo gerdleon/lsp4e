@@ -9,11 +9,12 @@
  * Contributors:
  *  Mickael Istria (Red Hat Inc.) - initial implementation
  *******************************************************************************/
-package org.eclipse.lsp4e.test;
+package org.eclipse.lsp4e.test.utils;
 
 import java.util.function.Supplier;
 
 import org.eclipse.core.resources.IProject;
+import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourcesPlugin;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.lsp4e.ConnectDocumentToLanguageServerSetupParticipant;
@@ -27,15 +28,13 @@ import org.junit.rules.TestWatcher;
 import org.junit.runner.Description;
 
 public class AllCleanRule extends TestWatcher {
-	
-	private static final boolean LOG_TEST_NAMES = Boolean.getBoolean("lsp4e.log.test.names");
-	
+
 	private final Supplier<ServerCapabilities> serverConfigurer;
-	
+
 	public AllCleanRule() {
 		this.serverConfigurer = MockLanguageServer::defaultServerCapabilities;
 	}
-	
+
 	public AllCleanRule(final Supplier<ServerCapabilities> serverConfigurer) {
 		this.serverConfigurer = serverConfigurer;
 	}
@@ -47,12 +46,9 @@ public class AllCleanRule extends TestWatcher {
 		if (intro != null) {
 			PlatformUI.getWorkbench().getIntroManager().closeIntro(intro);
 		}
-		if (LOG_TEST_NAMES) {
-			System.out.println("Starting: " + description);
-		}
 		clear();
 	}
-	
+
 	@Override
 	protected void finished(Description description) {
 		clear();
@@ -66,7 +62,7 @@ public class AllCleanRule extends TestWatcher {
 		ConnectDocumentToLanguageServerSetupParticipant.waitForAll();
 		for (IProject project : ResourcesPlugin.getWorkspace().getRoot().getProjects()) {
 			try {
-				project.delete(true, null);
+				project.delete(IResource.FORCE, null);
 			} catch (CoreException e) {
 				e.printStackTrace();
 			}

@@ -11,18 +11,17 @@
  *******************************************************************************/
 package org.eclipse.lsp4e.test.completion;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
 
 import java.util.ArrayList;
 import java.util.List;
 
-import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.jface.text.ITextViewer;
 import org.eclipse.jface.text.contentassist.ICompletionProposal;
 import org.eclipse.lsp4e.operations.completion.LSContentAssistProcessor;
-import org.eclipse.lsp4e.test.AllCleanRule;
-import org.eclipse.lsp4e.test.TestUtils;
+import org.eclipse.lsp4e.test.utils.AbstractTestWithProject;
+import org.eclipse.lsp4e.test.utils.TestUtils;
 import org.eclipse.lsp4e.tests.mock.MockLanguageServer;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemKind;
@@ -34,18 +33,14 @@ import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.ui.PartInitException;
 import org.junit.Before;
-import org.junit.Rule;
 
-public abstract class AbstractCompletionTest {
+public abstract class AbstractCompletionTest extends AbstractTestWithProject {
 
-	@Rule public AllCleanRule clear = new AllCleanRule();
-	protected IProject project;
 	protected LSContentAssistProcessor contentAssistProcessor;
 
 	@Before
-	public void setUp() throws CoreException {
-		project = TestUtils.createProject("CompletionTest" + System.currentTimeMillis());
-		contentAssistProcessor = new LSContentAssistProcessor();
+	public void setUp() {
+		contentAssistProcessor = new LSContentAssistProcessor(true, false);
 	}
 
 	protected CompletionItem createCompletionItem(String label, CompletionItemKind kind) {

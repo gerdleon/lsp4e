@@ -59,14 +59,16 @@ public class OpenDeclarationHyperlinkDetector extends AbstractHyperlinkDetector 
 		final var allLinks = new LinkedHashMap<Either<Location, LocationLink>,LSBasedHyperlink>();
 		try {
 			var definitions = LanguageServers.forDocument(document).withCapability(ServerCapabilities::getDefinitionProvider)
-				.collectAll(ls -> ls.getTextDocumentService().definition(LSPEclipseUtils.toDefinitionParams(params)).thenApply(l -> Pair.of(Messages.declarationHyperlinkLabel, l)));
+				.collectAll(ls -> ls.getTextDocumentService().definition(LSPEclipseUtils.toDefinitionParams(params)).thenApply(l -> Pair.of(Messages.definitionHyperlinkLabel, l)));
+			var declarations = LanguageServers.forDocument(document).withCapability(ServerCapabilities::getDeclarationProvider)
+				.collectAll(ls -> ls.getTextDocumentService().declaration(LSPEclipseUtils.toDeclarationParams(params)).thenApply(l -> Pair.of(Messages.declarationHyperlinkLabel, l)));
 			var typeDefinitions = LanguageServers.forDocument(document).withCapability(ServerCapabilities::getTypeDefinitionProvider)
 				.collectAll(ls -> ls.getTextDocumentService().typeDefinition(LSPEclipseUtils.toTypeDefinitionParams(params)).thenApply(l -> Pair.of(Messages.typeDefinitionHyperlinkLabel, l)));
 			var implementations = LanguageServers.forDocument(document).withCapability(ServerCapabilities::getImplementationProvider)
 				.collectAll(ls -> ls.getTextDocumentService().implementation(LSPEclipseUtils.toImplementationParams(params)).thenApply(l -> Pair.of(Messages.implementationHyperlinkLabel, l)));
-			LanguageServers.addAll(LanguageServers.addAll(definitions, typeDefinitions), implementations)
+			LanguageServers.addAll(LanguageServers.addAll(LanguageServers.addAll(definitions, declarations), typeDefinitions), implementations)
 				.get(800, TimeUnit.MILLISECONDS)
-				.stream().flatMap(locations -> toHyperlinks(document, region, locations.getFirst(), locations.getSecond()).stream())
+				.stream().flatMap(locations -> toHyperlinks(document, region, locations.first(), locations.second()).stream())
 				.forEach(link -> allLinks.putIfAbsent(link.getLocation(), link));
 		} catch (ExecutionException e) {
 			LanguageServerPlugin.logError(e);
@@ -74,12 +76,12 @@ public class OpenDeclarationHyperlinkDetector extends AbstractHyperlinkDetector 
 			LanguageServerPlugin.logError(e);
 			Thread.currentThread().interrupt();
 		} catch (TimeoutException e) {
-			LanguageServerPlugin.logWarning("Could not detect hyperlinks due to timeout after 800 miliseconds", e);  //$NON-NLS-1$
+			LanguageServerPlugin.logWarning("Could not detect hyperlinks due to timeout after 800 milliseconds", e);  //$NON-NLS-1$
 		}
 		if (allLinks.isEmpty()) {
 			return null;
 		}
-		return allLinks.values().toArray(new IHyperlink[allLinks.size()]);
+		return allLinks.values().toArray(IHyperlink[]::new);
 	}
 
 	/**

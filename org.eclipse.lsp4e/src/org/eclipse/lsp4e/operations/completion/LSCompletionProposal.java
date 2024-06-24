@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2016, 2022 Red Hat Inc. and others.
+ * Copyright (c) 2016, 2024 Red Hat Inc. and others.
  * This program and the accompanying materials are made
  * available under the terms of the Eclipse Public License 2.0
  * which is available at https://www.eclipse.org/legal/epl-2.0/
@@ -17,12 +17,9 @@
 package org.eclipse.lsp4e.operations.completion;
 
 import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
+import java.util.Collections;
 import java.util.List;
-import java.util.Set;
-import java.util.SortedSet;
-import java.util.TreeSet;
+import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -45,7 +42,6 @@ import org.eclipse.jface.text.IRegion;
 import org.eclipse.jface.text.ITextViewer;
 import org.eclipse.jface.text.Region;
 import org.eclipse.jface.text.contentassist.BoldStylerProvider;
-import org.eclipse.jface.text.contentassist.CompletionProposal;
 import org.eclipse.jface.text.contentassist.ICompletionProposal;
 import org.eclipse.jface.text.contentassist.ICompletionProposalExtension;
 import org.eclipse.jface.text.contentassist.ICompletionProposalExtension2;
@@ -72,6 +68,7 @@ import org.eclipse.lsp4e.ui.LSPImages;
 import org.eclipse.lsp4j.Command;
 import org.eclipse.lsp4j.CompletionItem;
 import org.eclipse.lsp4j.CompletionItemDefaults;
+import org.eclipse.lsp4j.CompletionOptions;
 import org.eclipse.lsp4j.ExecuteCommandOptions;
 import org.eclipse.lsp4j.ExecuteCommandParams;
 import org.eclipse.lsp4j.InsertReplaceEdit;
@@ -79,6 +76,7 @@ import org.eclipse.lsp4j.InsertTextFormat;
 import org.eclipse.lsp4j.InsertTextMode;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
+import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.swt.SWT;
@@ -115,12 +113,6 @@ public class LSCompletionProposal
 	private static final String TM_DIRECTORY = "TM_DIRECTORY"; //$NON-NLS-1$
 	/** The full file path of the current document */
 	private static final String TM_FILEPATH = "TM_FILEPATH"; //$NON-NLS-1$\
-
-	// This needs to be a sorted set by size because we want to match longest variable first, since some are substrings of others
-	private static SortedSet<String> ALL_VARIABLES = new TreeSet<>(Comparator.comparing(String::length).reversed().thenComparing(Comparator.naturalOrder()));
-	static {
-		ALL_VARIABLES.addAll(Set.of(TM_SELECTED_TEXT, TM_CURRENT_LINE, TM_CURRENT_WORD, TM_LINE_INDEX, TM_LINE_NUMBER, TM_FILENAME, TM_FILENAME_BASE, TM_DIRECTORY, TM_FILEPATH));
-	}
 
 	protected final CompletionItem item;
 	private final int initialOffset;
@@ -162,6 +154,12 @@ public class LSCompletionProposal
 			if (item.getInsertTextMode() == null) {
 				item.setInsertTextMode(defaults.getInsertTextMode());
 			}
+			String textEditText = item.getTextEditText();
+			if (textEditText != null && defaults.getEditRange() != null) {
+				item.setTextEdit(defaults.getEditRange().map(
+					range -> Either.forLeft(new TextEdit(range, textEditText)),
+					insertReplaceRange -> Either.forRight(new InsertReplaceEdit(textEditText, insertReplaceRange.getInsert(), insertReplaceRange.getReplace()))));
+			}
 		}
 	}
 
@@ -177,7 +175,7 @@ public class LSCompletionProposal
 				currentOffset = offset;
 				rankScore = null;
 				rankCategory = null;
-				documentFilterAddition = offset > this.initialOffset ? document.get(initialOffset, offset - initialOffset) : ""; //$NON-NLS-1$
+				documentFilterAddition = offset > initialOffset ? document.get(initialOffset, offset - initialOffset) : ""; //$NON-NLS-1$
 			}
 			return documentFilter + documentFilterAddition;
 		}
@@ -242,15 +240,15 @@ public class LSCompletionProposal
 	}
 
 	public int getBestOffset() {
-		return this.bestOffset;
+		return bestOffset;
 	}
 
 	public void updateOffset(int offset) {
-		this.bestOffset = getPrefixCompletionStart(document, offset);
+		bestOffset = getPrefixCompletionStart(document, offset);
 	}
 
 	public CompletionItem getItem() {
-		return this.item;
+		return item;
 	}
 
 	private boolean isDeprecated() {
@@ -263,7 +261,7 @@ public class LSCompletionProposal
 		StyledString res = isDeprecated()
 				? new StyledString(rawString, StyleUtil.DEPRECATE)
 				: new StyledString(rawString);
-		if (offset > this.bestOffset) {
+		if (offset > bestOffset) {
 			try {
 				String subString = getDocumentFilter(offset).toLowerCase();
 				int lastIndex = 0;
@@ -296,7 +294,7 @@ public class LSCompletionProposal
 
 	@Override
 	public String getDisplayString() {
-		return this.item.getLabel();
+		return item.getLabel();
 	}
 
 	@Override
@@ -329,23 +327,13 @@ public class LSCompletionProposal
 
 	@Override
 	public String getAdditionalProposalInfo(IProgressMonitor monitor) {
-		if (languageServerWrapper.isActive() && languageServerWrapper.getServerCapabilities().getCompletionProvider().getResolveProvider()) {
-			try {
-				languageServerWrapper.execute(ls -> ls.getTextDocumentService().resolveCompletionItem(item).thenAccept(this::updateCompletionItem))
-						.get(RESOLVE_TIMEOUT, TimeUnit.MILLISECONDS);
-			} catch (ExecutionException e) {
-				LanguageServerPlugin.logError(e);
-			} catch (InterruptedException e) {
-				LanguageServerPlugin.logError(e);
-				Thread.currentThread().interrupt();
-			} catch (TimeoutException e) {
-				LanguageServerPlugin.logWarning("Could not resolve completion items due to timeout after " + RESOLVE_TIMEOUT + " miliseconds in `completionItem/resolve`", e);  //$NON-NLS-1$//$NON-NLS-2$
-			}
+		if (languageServerWrapper.isActive() && resolvesCompletionItem(languageServerWrapper.getServerCapabilities())) {
+			resolveItem();
 		}
 
 		final var res = new StringBuilder();
-		if (this.item.getDetail() != null && !this.item.getDetail().isEmpty()) {
-			res.append("<p>" + this.item.getDetail() + "</p>"); //$NON-NLS-1$ //$NON-NLS-2$
+		if (item.getDetail() != null && !item.getDetail().isEmpty()) {
+			res.append("<p>" + item.getDetail() + "</p>"); //$NON-NLS-1$ //$NON-NLS-2$
 		}
 		if (res.length() > 0) {
 			res.append("<br/>"); //$NON-NLS-1$
@@ -358,6 +346,31 @@ public class LSCompletionProposal
 		}
 
 		return res.toString();
+	}
+
+	private boolean resolvesCompletionItem(final ServerCapabilities capabilities) {
+		if (capabilities != null) {
+			CompletionOptions completionProvider = capabilities.getCompletionProvider();
+			if (completionProvider != null) {
+				Boolean hasResolveProvider = completionProvider.getResolveProvider();
+				return hasResolveProvider != null && hasResolveProvider;
+			}
+		}
+		return false;
+	}
+
+	private void resolveItem() {
+		try {
+			languageServerWrapper.execute(ls -> ls.getTextDocumentService().resolveCompletionItem(item).thenAccept(this::updateCompletionItem))
+					.get(RESOLVE_TIMEOUT, TimeUnit.MILLISECONDS);
+		} catch (ExecutionException e) {
+			LanguageServerPlugin.logError(e);
+		} catch (InterruptedException e) {
+			LanguageServerPlugin.logError(e);
+			Thread.currentThread().interrupt();
+		} catch (TimeoutException e) {
+			LanguageServerPlugin.logWarning("Could not resolve completion items due to timeout after " + RESOLVE_TIMEOUT + " milliseconds in `completionItem/resolve`", e);  //$NON-NLS-1$//$NON-NLS-2$
+		}
 	}
 
 	private void updateCompletionItem(CompletionItem resolvedItem) {
@@ -392,12 +405,12 @@ public class LSCompletionProposal
 
 	@Override
 	public CharSequence getPrefixCompletionText(IDocument document, int completionOffset) {
-		return item.getInsertText().substring(completionOffset - this.bestOffset);
+		return item.getInsertText().substring(completionOffset - bestOffset);
 	}
 
 	@Override
 	public int getPrefixCompletionStart(IDocument document, int completionOffset) {
-		Either<TextEdit, InsertReplaceEdit> textEdit = this.item.getTextEdit();
+		Either<TextEdit, InsertReplaceEdit> textEdit = item.getTextEdit();
 		if (textEdit != null) {
 			try {
 				return LSPEclipseUtils.toOffset(getTextEditRange().getStart(), document);
@@ -438,12 +451,12 @@ public class LSCompletionProposal
 		try {
 			if (textEdit == null) {
 				insertText = getInsertText();
-				Position start = LSPEclipseUtils.toPosition(this.bestOffset, document);
+				Position start = LSPEclipseUtils.toPosition(bestOffset, document);
 				Position end = LSPEclipseUtils.toPosition(offset, document); // need 2 distinct objects
 				textEdit = new TextEdit(new Range(start, end), insertText);
-			} else if (offset > this.initialOffset) {
+			} else if (offset > initialOffset) {
 				// characters were added after completion was activated
-				int shift = offset - this.initialOffset;
+				int shift = offset - initialOffset;
 				textEdit.getRange().getEnd().setCharacter(textEdit.getRange().getEnd().getCharacter() + shift);
 			}
 			{ // workaround https://github.com/Microsoft/vscode/issues/17036
@@ -465,107 +478,45 @@ public class LSCompletionProposal
 
 			if (insertText != null) {
 				// try to reuse existing characters after completion location
-				int shift = offset - this.bestOffset;
+				int shift = offset - bestOffset;
 				int commonSize = 0;
 				while (commonSize < insertText.length() - shift
 					&& document.getLength() > offset + commonSize
-					&& document.getChar(this.bestOffset + shift + commonSize) == insertText.charAt(commonSize + shift)) {
+					&& document.getChar(bestOffset + shift + commonSize) == insertText.charAt(commonSize + shift)) {
 					commonSize++;
 				}
 				textEdit.getRange().getEnd().setCharacter(textEdit.getRange().getEnd().getCharacter() + commonSize);
 			}
 			insertText = textEdit.getNewText();
-			final var regions = new LinkedHashMap<String, List<LinkedPosition>>();
+			Map<String, List<LinkedPosition>> regions = Collections.emptyMap();
 			int insertionOffset = LSPEclipseUtils.toOffset(textEdit.getRange().getStart(), document);
-			insertionOffset = computeNewOffset(item.getAdditionalTextEdits(), insertionOffset, document);
 			if (item.getInsertTextMode() == InsertTextMode.AdjustIndentation) {
 				insertText = adjustIndentation(document, insertText, insertionOffset);
 			}
+			insertionOffset = computeNewOffset(item.getAdditionalTextEdits(), insertionOffset, document);
 			if (item.getInsertTextFormat() == InsertTextFormat.Snippet) {
-				insertText = substituteVariables(insertText);
-				// next is for tabstops, placeholders and linked edition
-				int currentSnippetOffsetInInsertText = 0;
-				while ((currentSnippetOffsetInInsertText = insertText.indexOf('$', currentSnippetOffsetInInsertText)) != -1) {
-					final var keyBuilder = new StringBuilder();
-					boolean isChoice = false;
-					final var snippetProposals = new ArrayList<String>();
-					int offsetInSnippet = 1;
-					while (currentSnippetOffsetInInsertText + offsetInSnippet < insertText.length() && Character.isDigit(insertText.charAt(currentSnippetOffsetInInsertText + offsetInSnippet))) {
-						keyBuilder.append(insertText.charAt(currentSnippetOffsetInInsertText + offsetInSnippet));
-						offsetInSnippet++;
-					}
-					if (keyBuilder.length() == 0 && insertText.substring(currentSnippetOffsetInInsertText).startsWith("${")) { //$NON-NLS-1$
-						offsetInSnippet = 2;
-						while (currentSnippetOffsetInInsertText + offsetInSnippet < insertText.length() && Character.isDigit(insertText.charAt(currentSnippetOffsetInInsertText + offsetInSnippet))) {
-							keyBuilder.append(insertText.charAt(currentSnippetOffsetInInsertText + offsetInSnippet));
-							offsetInSnippet++;
-						}
-						if (currentSnippetOffsetInInsertText + offsetInSnippet < insertText.length()) {
-							char currentChar = insertText.charAt(currentSnippetOffsetInInsertText + offsetInSnippet);
-							if (currentChar == ':' || currentChar == '|') {
-								isChoice |= currentChar == '|';
-								offsetInSnippet++;
-							}
-						}
-						boolean close = false;
-						var valueBuilder = new StringBuilder();
-						while (currentSnippetOffsetInInsertText + offsetInSnippet < insertText.length() && !close) {
-							char currentChar = insertText.charAt(currentSnippetOffsetInInsertText + offsetInSnippet);
-							if (valueBuilder.length() > 0 &&
-								((isChoice && (currentChar == ',' || currentChar == '|') || currentChar == '}'))) {
-								String value = valueBuilder.toString();
-								if (value.startsWith("$")) { //$NON-NLS-1$
-									String varValue = getVariableValue(value.substring(1));
-									if (varValue != null) {
-										value = varValue;
-									}
-								}
-								snippetProposals.add(value);
-								valueBuilder = new StringBuilder();
-							} else if (currentChar != '}') {
-								valueBuilder.append(currentChar);
-							}
-							close = currentChar == '}';
-							offsetInSnippet++;
-						}
-					}
-					String defaultProposal = snippetProposals.isEmpty() ? "" : snippetProposals.get(0); //$NON-NLS-1$
-					if (keyBuilder.length() > 0) {
-						String key = keyBuilder.toString();
-						insertText = insertText.substring(0, currentSnippetOffsetInInsertText) + defaultProposal + insertText.substring(currentSnippetOffsetInInsertText + offsetInSnippet);
-						LinkedPosition position = null;
-						if (!snippetProposals.isEmpty()) {
-							int replacementOffset = insertionOffset + currentSnippetOffsetInInsertText;
-							ICompletionProposal[] proposals = snippetProposals.stream().map(string ->
-								new CompletionProposal(string, replacementOffset, defaultProposal.length(), replacementOffset + string.length())
-							).toArray(ICompletionProposal[]::new);
-							position = new ProposalPosition(document, insertionOffset + currentSnippetOffsetInInsertText, defaultProposal.length(), proposals);
-						} else {
-							position = new LinkedPosition(document, insertionOffset + currentSnippetOffsetInInsertText, defaultProposal.length());
-						}
-						if (firstPosition == null) {
-							firstPosition = position;
-						}
-						regions.computeIfAbsent(key, whatever -> new ArrayList<>()).add(position);
-						currentSnippetOffsetInInsertText += defaultProposal.length();
-					} else {
-						currentSnippetOffsetInInsertText++;
-					}
+				var completionSnippetParser = new CompletionSnippetParser(document, insertText, insertionOffset, this::getVariableValue);
+				insertText = completionSnippetParser.parse();
+				regions = completionSnippetParser.getLinkedPositions();
+				if (!regions.isEmpty() && firstPosition == null) {
+					firstPosition = regions.values().iterator().next().get(0);
 				}
 			}
 			textEdit.setNewText(insertText); // insertText now has placeholder removed
 			List<TextEdit> additionalEdits = item.getAdditionalTextEdits();
 			if (additionalEdits != null && !additionalEdits.isEmpty()) {
+				Position initialPosition = LSPEclipseUtils.toPosition(initialOffset, document);
+
 				final var allEdits = new ArrayList<TextEdit>();
 				allEdits.add(textEdit);
 				additionalEdits.stream().forEach(te -> {
-					int shift = offset - this.initialOffset;
+					int shift = offset - initialOffset;
 					if (shift != 0) {
 						try {
 							int start = LSPEclipseUtils.toOffset(te.getRange().getStart(), document);
 							int end = LSPEclipseUtils.toOffset(te.getRange().getEnd(), document);
-							if (start > this.initialOffset) {
-								// We need to shift the Range according to the shift
+							if (start > initialOffset && te.getRange().getStart().getLine() == initialPosition.getLine()) {
+								// We need to shift the Range according to the shift (if on the same line)
 								te.getRange().setStart(LSPEclipseUtils.toPosition(start + shift, document));
 								te.getRange().setEnd(LSPEclipseUtils.toPosition(end + shift, document));
 							}
@@ -621,14 +572,14 @@ public class LSCompletionProposal
 	}
 
 	private String adjustIndentation(IDocument document, String insertText, int insertionOffset) throws BadLocationException {
+		int line = document.getLineOfOffset(insertionOffset);
+		int whitespaceOffset = document.getLineOffset(line);
 		final var whitespacesBeforeInsertion = new StringBuilder();
-		int whitespaceOffset = insertionOffset - 1;
-		while (whitespaceOffset >= 0 && document.getChar(whitespaceOffset) != '\n' && Character.isWhitespace(document.getChar(whitespaceOffset))) {
-			whitespacesBeforeInsertion.append(document.getChar(whitespaceOffset));
-			whitespaceOffset--;
-		}
 		whitespacesBeforeInsertion.append('\n');
-		whitespacesBeforeInsertion.reverse();
+		while (whitespaceOffset < insertionOffset && Character.isWhitespace(document.getChar(whitespaceOffset))) {
+			whitespacesBeforeInsertion.append(document.getChar(whitespaceOffset));
+			whitespaceOffset++;
+		}
 		return insertText.replace("\n", whitespacesBeforeInsertion); //$NON-NLS-1$
 	}
 
@@ -656,15 +607,6 @@ public class LSCompletionProposal
 	}
 
 	private String getVariableValue(String variableName) {
-		if (variableName.startsWith("$")) {//$NON-NLS-1$
-			variableName = variableName.substring(1);
-		}
-		if (variableName.startsWith("{")) {//$NON-NLS-1$
-			variableName = variableName.substring(1);
-		}
-		if (variableName.endsWith("}")) {//$NON-NLS-1$
-			variableName = variableName.substring(0, variableName.length() - 1);
-		}
 		return switch (variableName) {
 		case TM_FILENAME_BASE -> {
 			IPath pathBase = LSPEclipseUtils.toPath(document).removeFileExtension();
@@ -674,11 +616,25 @@ public class LSCompletionProposal
 		case TM_FILENAME -> LSPEclipseUtils.toPath(document).lastSegment();
 		case TM_FILEPATH -> getAbsoluteLocation(LSPEclipseUtils.toPath(document));
 		case TM_DIRECTORY -> getAbsoluteLocation(LSPEclipseUtils.toPath(document).removeLastSegments(1));
-		case TM_LINE_INDEX -> Integer.toString(getTextEditRange().getStart().getLine()); // TODO probably wrong, should use viewer state
-		case TM_LINE_NUMBER -> Integer.toString(getTextEditRange().getStart().getLine() + 1);  // TODO probably wrong, should use viewer state
-		case TM_CURRENT_LINE -> {  // TODO probably wrong, should use viewer state
-			int currentLineIndex = getTextEditRange().getStart().getLine();
+		case TM_LINE_INDEX -> {
 			try {
+				yield Integer.toString(getTextEditRange().getStart().getLine()); // TODO probably wrong, should use viewer state
+			} catch (BadLocationException e) {
+				LanguageServerPlugin.logWarning(e.getMessage(), e);
+				yield ""; //$NON-NLS-1$
+			}
+		}
+		case TM_LINE_NUMBER -> {
+			try {
+				yield Integer.toString(getTextEditRange().getStart().getLine() + 1); // TODO probably wrong, should use viewer state
+			} catch (BadLocationException e) {
+				LanguageServerPlugin.logWarning(e.getMessage(), e);
+				yield ""; //$NON-NLS-1$
+			}
+		}
+		case TM_CURRENT_LINE -> {  // TODO probably wrong, should use viewer state
+			try {
+				int currentLineIndex = getTextEditRange().getStart().getLine();
 				IRegion lineInformation = document.getLineInformation(currentLineIndex);
 				String line = document.get(lineInformation.getOffset(), lineInformation.getLength());
 				yield line;
@@ -719,22 +675,15 @@ public class LSCompletionProposal
 		};
 	}
 
-	private String substituteVariables(String insertText) {
-		for (String variable : ALL_VARIABLES) {
-			if (insertText.contains('$' + variable) || insertText.contains("${" + variable + '}')) { //$NON-NLS-1$
-				String value = getVariableValue(variable);
-				if (value != null) {
-					insertText = insertText.replace("${" + variable + '}', value); //$NON-NLS-1$
-					insertText = insertText.replace('$' + variable, value);
-				}
-			}
+	private Range getTextEditRange() throws BadLocationException {
+		Either<TextEdit, InsertReplaceEdit> textEdit = item.getTextEdit();
+		if (textEdit != null) {
+			return textEdit.map(TextEdit::getRange, InsertReplaceEdit::getInsert);
+		} else {
+				Position start = LSPEclipseUtils.toPosition(bestOffset, document);
+				Position end = LSPEclipseUtils.toPosition(initialOffset, document);
+				return new Range(start, end);
 		}
-		return insertText;
-	}
-
-
-	private Range getTextEditRange() {
-		return item.getTextEdit().map(TextEdit::getRange, InsertReplaceEdit::getInsert);
 	}
 
 	/**
@@ -757,21 +706,21 @@ public class LSCompletionProposal
 	}
 
 	protected String getInsertText() {
-		String insertText = this.item.getInsertText();
-		Either<TextEdit, InsertReplaceEdit> eitherTextEdit = this.item.getTextEdit();
+		String insertText = item.getInsertText();
+		Either<TextEdit, InsertReplaceEdit> eitherTextEdit = item.getTextEdit();
 		if (eitherTextEdit != null) {
 			insertText = eitherTextEdit.map(TextEdit::getNewText, InsertReplaceEdit::getNewText);
 		}
 		if (insertText == null) {
-			insertText = this.item.getLabel();
+			insertText = item.getLabel();
 		}
 		return insertText;
 	}
 
 	@Override
 	public Point getSelection(IDocument document) {
-		if (this.firstPosition != null) {
-			return new Point(this.firstPosition.getOffset(), this.firstPosition.getLength());
+		if (firstPosition != null) {
+			return new Point(firstPosition.getOffset(), firstPosition.getLength());
 		}
 		if (selection == null) {
 			return null;
@@ -781,12 +730,12 @@ public class LSCompletionProposal
 
 	@Override
 	public String getAdditionalProposalInfo() {
-		return this.getAdditionalProposalInfo(new NullProgressMonitor());
+		return getAdditionalProposalInfo(new NullProgressMonitor());
 	}
 
 	@Override
 	public Image getImage() {
-		return LSPImages.imageFromCompletionItem(this.item);
+		return LSPImages.imageFromCompletionItem(item);
 	}
 
 	@Override
@@ -820,7 +769,7 @@ public class LSCompletionProposal
 
 	@Override
 	public boolean isValidFor(IDocument document, int offset) {
-		return (!isIncomplete || offset == this.initialOffset) && validate(document, offset, null);
+		return (!isIncomplete || offset == initialOffset) && validate(document, offset, null);
 	}
 
 	@Override
@@ -837,13 +786,13 @@ public class LSCompletionProposal
 		if (item.getLabel() == null || item.getLabel().isEmpty()) {
 			return false;
 		}
-		if (offset < this.bestOffset) {
+		if (offset < bestOffset) {
 			return false;
 		}
 		try {
 			String documentFilter = getDocumentFilter(offset);
 			if (!documentFilter.isEmpty()) {
-				return CompletionProposalTools.isSubstringFoundOrderedInString(documentFilter, getFilterString());
+				return !(isIncomplete && currentOffset != initialOffset) && CompletionProposalTools.isSubstringFoundOrderedInString(documentFilter, getFilterString());
 			} else if (item.getTextEdit() != null) {
 				return offset == LSPEclipseUtils.toOffset(getTextEditRange().getStart(), document);
 			}
@@ -866,12 +815,11 @@ public class LSCompletionProposal
 
 	@Override
 	public void apply(IDocument document) {
-		apply(document, Character.MIN_VALUE, 0, this.bestOffset);
+		apply(document, Character.MIN_VALUE, 0, bestOffset);
 	}
 
 	@Override
 	public char[] getTriggerCharacters() {
-		// TODO Auto-generated method stub
 		return null;
 	}
 

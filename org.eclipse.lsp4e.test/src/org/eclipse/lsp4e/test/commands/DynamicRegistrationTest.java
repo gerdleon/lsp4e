@@ -11,6 +11,7 @@
  *******************************************************************************/
 package org.eclipse.lsp4e.test.commands;
 
+import static org.eclipse.lsp4e.test.utils.TestUtils.waitForCondition;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -23,12 +24,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Predicate;
 
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.resources.IProject;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.lsp4e.LSPEclipseUtils;
+import org.eclipse.lsp4e.LanguageServers;
 import org.eclipse.lsp4e.LanguageServiceAccessor;
-import org.eclipse.lsp4e.test.AllCleanRule;
-import org.eclipse.lsp4e.test.TestUtils;
+import org.eclipse.lsp4e.test.utils.AbstractTestWithProject;
+import org.eclipse.lsp4e.test.utils.TestUtils;
 import org.eclipse.lsp4e.tests.mock.MockLanguageServer;
 import org.eclipse.lsp4j.ExecuteCommandOptions;
 import org.eclipse.lsp4j.Registration;
@@ -40,30 +41,25 @@ import org.eclipse.lsp4j.WorkspaceFoldersOptions;
 import org.eclipse.lsp4j.WorkspaceServerCapabilities;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 
 import com.google.gson.Gson;
 
-public class DynamicRegistrationTest {
+public class DynamicRegistrationTest extends AbstractTestWithProject {
 
 	private static final String WORKSPACE_EXECUTE_COMMAND = "workspace/executeCommand";
 	private static final String WORKSPACE_DID_CHANGE_FOLDERS = "workspace/didChangeWorkspaceFolders";
 
-	@Rule public AllCleanRule clear = new AllCleanRule();
-
-	private IProject project;
-
 	@Before
 	public void setUp() throws Exception {
-		project = TestUtils.createProject("CommandRegistrationTest" + System.currentTimeMillis());
 		IFile testFile = TestUtils.createFile(project, "shouldUseExtension.lspt", "");
 
 		// Make sure mock language server is created...
 		IDocument document = LSPEclipseUtils.getDocument(testFile);
 		assertNotNull(document);
-		LanguageServiceAccessor.getLanguageServers(document, null).get(1,
-				TimeUnit.SECONDS);
+		LanguageServers.forDocument(document).anyMatching();
+
+		waitForCondition(5_000, () -> !MockLanguageServer.INSTANCE.getRemoteProxies().isEmpty());
 		getMockClient();
 	}
 
@@ -106,7 +102,7 @@ public class DynamicRegistrationTest {
 		LanguageClient client = getMockClient();
 		Unregistration unregistration = new Unregistration(registration.toString(), WORKSPACE_EXECUTE_COMMAND);
 		client.unregisterCapability(new UnregistrationParams(Arrays.asList(unregistration)))
-		.get(1, TimeUnit.SECONDS);
+			.get(1, TimeUnit.SECONDS);
 	}
 
 	private UUID registerWorkspaceFolders() throws Exception {
@@ -116,7 +112,7 @@ public class DynamicRegistrationTest {
 		registration.setId(id.toString());
 		registration.setMethod(WORKSPACE_DID_CHANGE_FOLDERS);
 		client.registerCapability(new RegistrationParams(Arrays.asList(registration)))
-		.get(1, TimeUnit.SECONDS);
+			.get(1, TimeUnit.SECONDS);
 		return id;
 	}
 
@@ -156,5 +152,4 @@ public class DynamicRegistrationTest {
 		}
 		return false;
 	}
-
 }

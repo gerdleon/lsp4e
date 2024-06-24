@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2016-2022 Red Hat Inc. and others.
+ * Copyright (c) 2016-2023 Red Hat Inc. and others.
  * This program and the accompanying materials are made
  * available under the terms of the Eclipse Public License 2.0
  * which is available at https://www.eclipse.org/legal/epl-2.0/
@@ -98,7 +98,7 @@ public class LSPCodeActionMarkerResolution implements IMarkerResolutionGenerator
 		try {
 			att = marker.getAttribute(LSP_REMEDIATION);
 			if (att == null) {
-				checkMarkerResoultion(marker);
+				checkMarkerResolution(marker);
 				att = marker.getAttribute(LSP_REMEDIATION);
 			}
 		} catch (IOException | CoreException | ExecutionException e) {
@@ -119,7 +119,7 @@ public class LSPCodeActionMarkerResolution implements IMarkerResolutionGenerator
 				.toArray(IMarkerResolution[]::new);
 	}
 
-	private void checkMarkerResoultion(IMarker marker) throws IOException, CoreException, InterruptedException, ExecutionException {
+	private void checkMarkerResolution(IMarker marker) throws IOException, CoreException, InterruptedException, ExecutionException {
 		IResource res = marker.getResource();
 		if (res instanceof IFile file) {
 			Object[] attributes = marker.getAttributes(new String[]{LSPDiagnosticsToMarkers.LANGUAGE_SERVER_ID, LSPDiagnosticsToMarkers.LSP_DIAGNOSTIC});
@@ -134,28 +134,30 @@ public class LSPCodeActionMarkerResolution implements IMarkerResolutionGenerator
 				params.setContext(context);
 				params.setTextDocument(LSPEclipseUtils.toTextDocumentIdentifier(res));
 				params.setRange(diagnostic.getRange());
-				marker.setAttribute(LSP_REMEDIATION, COMPUTING);
-				try {
-					executor.computeFirst(ls -> ls.getTextDocumentService().codeAction(params)).thenAccept(optional -> {
-						try {
-							marker.setAttribute(LSP_REMEDIATION, optional.orElse(Collections.emptyList()));
-						} catch (CoreException e) {
-							LanguageServerPlugin.logError(e);
-						}
-					}).thenRun(() -> {
-						Display display = UI.getDisplay();
-						display.asyncExec(() -> {
-							ITextViewer textViewer = UI.getActiveTextViewer();
-							if (textViewer != null) {
-								// Do not re-invoke hover right away as hover may not be showing at all yet
-								display.timerExec(500, () -> reinvokeQuickfixProposalsIfNecessary(textViewer));
+				if (marker.exists()) { // otherwise the marker has been removed by now
+					marker.setAttribute(LSP_REMEDIATION, COMPUTING);
+					try {
+						executor.computeFirst(ls -> ls.getTextDocumentService().codeAction(params)).thenAccept(optional -> {
+							try {
+								marker.setAttribute(LSP_REMEDIATION, optional.orElse(Collections.emptyList()));
+							} catch (CoreException e) {
+								LanguageServerPlugin.logError(e);
 							}
-						});
-					}).get(300, TimeUnit.MILLISECONDS);
-					// wait a bit to avoid showing too much "Computing" without looking like a freeze
-				} catch (TimeoutException e) {
-					LanguageServerPlugin.logWarning(
-							"Could get code actions due to timeout after 300 miliseconds in `textDocument/codeAction`", e); //$NON-NLS-1$
+						}).thenRun(() -> {
+							Display display = UI.getDisplay();
+							display.asyncExec(() -> {
+								ITextViewer textViewer = UI.getActiveTextViewer();
+								if (textViewer != null) {
+									// Do not re-invoke hover right away as hover may not be showing at all yet
+									display.timerExec(500, () -> reinvokeQuickfixProposalsIfNecessary(textViewer));
+								}
+							});
+						}).get(300, TimeUnit.MILLISECONDS);
+						// wait a bit to avoid showing too much "Computing" without looking like a freeze
+					} catch (TimeoutException e) {
+						LanguageServerPlugin.logWarning(
+								"Could get code actions due to timeout after 300 milliseconds in `textDocument/codeAction`", e); //$NON-NLS-1$
+					}
 				}
 			}
 		}
@@ -205,7 +207,7 @@ public class LSPCodeActionMarkerResolution implements IMarkerResolutionGenerator
 		try {
 			Object remediation = marker.getAttribute(LSP_REMEDIATION);
 			if (remediation == null) {
-				checkMarkerResoultion(marker);
+				checkMarkerResolution(marker);
 				remediation = marker.getAttribute(LSP_REMEDIATION);
 			}
 			return remediation == COMPUTING || (remediation instanceof Collection<?> collection && !collection.isEmpty());

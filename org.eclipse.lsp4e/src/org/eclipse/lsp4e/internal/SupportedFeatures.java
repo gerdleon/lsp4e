@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2022-3 Cocotec Ltd and others.
+ * Copyright (c) 2022-2024 Cocotec Ltd and others.
  * This program and the accompanying materials are made
  * available under the terms of the Eclipse Public License 2.0
  * which is available at https://www.eclipse.org/legal/epl-2.0/
@@ -28,6 +28,7 @@ import org.eclipse.lsp4j.CompletionCapabilities;
 import org.eclipse.lsp4j.CompletionItemCapabilities;
 import org.eclipse.lsp4j.CompletionItemInsertTextModeSupportCapabilities;
 import org.eclipse.lsp4j.CompletionItemResolveSupportCapabilities;
+import org.eclipse.lsp4j.CompletionListCapabilities;
 import org.eclipse.lsp4j.DefinitionCapabilities;
 import org.eclipse.lsp4j.DocumentHighlightCapabilities;
 import org.eclipse.lsp4j.DocumentLinkCapabilities;
@@ -40,6 +41,7 @@ import org.eclipse.lsp4j.HoverCapabilities;
 import org.eclipse.lsp4j.InlayHintCapabilities;
 import org.eclipse.lsp4j.InsertTextMode;
 import org.eclipse.lsp4j.MarkupKind;
+import org.eclipse.lsp4j.PublishDiagnosticsCapabilities;
 import org.eclipse.lsp4j.RangeFormattingCapabilities;
 import org.eclipse.lsp4j.ReferencesCapabilities;
 import org.eclipse.lsp4j.RenameCapabilities;
@@ -57,10 +59,8 @@ import org.eclipse.lsp4j.WindowClientCapabilities;
 import org.eclipse.lsp4j.WindowShowMessageRequestCapabilities;
 import org.eclipse.lsp4j.WorkspaceClientCapabilities;
 import org.eclipse.lsp4j.WorkspaceEditCapabilities;
+import org.eclipse.lsp4j.WorkspaceEditChangeAnnotationSupportCapabilities;
 
-/**
- *
- */
 public class SupportedFeatures {
 
 	public static @NonNull TextDocumentClientCapabilities getTextDocumentClientCapabilities() {
@@ -77,12 +77,19 @@ public class SupportedFeatures {
 		textDocumentClientCapabilities.setCodeLens(new CodeLensCapabilities());
 		textDocumentClientCapabilities.setInlayHint(new InlayHintCapabilities());
 		textDocumentClientCapabilities.setColorProvider(new ColorProviderCapabilities());
+		textDocumentClientCapabilities.setPublishDiagnostics(new PublishDiagnosticsCapabilities());
 		final var completionItemCapabilities = new CompletionItemCapabilities(Boolean.TRUE);
 		completionItemCapabilities
 				.setDocumentationFormat(Arrays.asList(MarkupKind.MARKDOWN, MarkupKind.PLAINTEXT));
 		completionItemCapabilities.setInsertTextModeSupport(new CompletionItemInsertTextModeSupportCapabilities(List.of(InsertTextMode.AsIs, InsertTextMode.AdjustIndentation)));
 		completionItemCapabilities.setResolveSupport(new CompletionItemResolveSupportCapabilities(List.of("documentation", "detail", "additionalTextEdits"))); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
-		textDocumentClientCapabilities.setCompletion(new CompletionCapabilities(completionItemCapabilities));
+		final var completionCapabilities = new CompletionCapabilities(completionItemCapabilities);
+		completionCapabilities.setContextSupport(Boolean.TRUE);
+		completionCapabilities.setCompletionList(new CompletionListCapabilities(List.of("commitCharacters", //$NON-NLS-1$
+                        "editRange", //$NON-NLS-1$
+                        "insertTextFormat", //$NON-NLS-1$
+                        "insertTextMode"))); //$NON-NLS-1$
+		textDocumentClientCapabilities.setCompletion(completionCapabilities);
 		final var definitionCapabilities = new DefinitionCapabilities();
 		definitionCapabilities.setLinkSupport(Boolean.TRUE);
 		textDocumentClientCapabilities.setDefinition(definitionCapabilities);
@@ -132,6 +139,7 @@ public class SupportedFeatures {
 		editCapabilities.setResourceOperations(Arrays.asList(ResourceOperationKind.Create,
 				ResourceOperationKind.Delete, ResourceOperationKind.Rename));
 		editCapabilities.setFailureHandling(FailureHandlingKind.Undo);
+		editCapabilities.setChangeAnnotationSupport(new WorkspaceEditChangeAnnotationSupportCapabilities(true));
 		workspaceClientCapabilities.setWorkspaceEdit(editCapabilities);
 		CodeLensWorkspaceCapabilities codeLensWorkspaceCapabilities = new CodeLensWorkspaceCapabilities(true);
 		workspaceClientCapabilities.setCodeLens(codeLensWorkspaceCapabilities);
@@ -146,4 +154,6 @@ public class SupportedFeatures {
 		return windowClientCapabilities;
 	}
 
+	private SupportedFeatures() {
+	}
 }

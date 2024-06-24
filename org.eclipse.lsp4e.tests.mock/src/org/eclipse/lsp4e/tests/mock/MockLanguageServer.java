@@ -12,6 +12,7 @@
  *  Lucas Bullen (Red Hat Inc.) - Bug 508458 - Add support for codelens.
  *  Kris De Volder (Pivotal Inc.) - Provide test code access to Client proxy.
  *  Rubén Porras Campo (Avaloq Evolution AG) - Add support for willSaveWaitUntil.
+ *  Joao Dinis Ferreira (Avaloq Group AG) - Add support for position-dependent mock document highlights
  *******************************************************************************/
 package org.eclipse.lsp4e.tests.mock;
 
@@ -19,13 +20,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import org.eclipse.lsp4j.CodeAction;
@@ -48,6 +52,8 @@ import org.eclipse.lsp4j.DocumentLink;
 import org.eclipse.lsp4j.DocumentLinkOptions;
 import org.eclipse.lsp4j.DocumentSymbol;
 import org.eclipse.lsp4j.ExecuteCommandOptions;
+import org.eclipse.lsp4j.FoldingRange;
+import org.eclipse.lsp4j.FoldingRangeProviderOptions;
 import org.eclipse.lsp4j.Hover;
 import org.eclipse.lsp4j.InitializeParams;
 import org.eclipse.lsp4j.InitializeResult;
@@ -55,6 +61,7 @@ import org.eclipse.lsp4j.LinkedEditingRangeRegistrationOptions;
 import org.eclipse.lsp4j.LinkedEditingRanges;
 import org.eclipse.lsp4j.Location;
 import org.eclipse.lsp4j.LocationLink;
+import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.RenameOptions;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.SignatureHelp;
@@ -80,15 +87,17 @@ public final class MockLanguageServer implements LanguageServer {
 	 */
 	public static String SUPPORTED_COMMAND_ID = "mock.command";
 
-	private MockTextDocumentService textDocumentService = new MockTextDocumentService(this::buildMaybeDelayedFuture);
-	private MockWorkspaceService workspaceService = new MockWorkspaceService(this::buildMaybeDelayedFuture);
-	private InitializeResult initializeResult = new InitializeResult();
-	private long delay = 0;
-	private boolean started;
+	private volatile MockTextDocumentService textDocumentService = new MockTextDocumentService(
+			this::buildMaybeDelayedFuture);
+	private final MockWorkspaceService workspaceService = new MockWorkspaceService(this::buildMaybeDelayedFuture);
+	private final InitializeResult initializeResult = new InitializeResult();
+	private volatile long delay = 0;
+	private volatile Executor delayedExecutor = null;
+	private volatile boolean started;
 
-	private List<LanguageClient> remoteProxies = new ArrayList<>();
+	private final List<LanguageClient> remoteProxies = new CopyOnWriteArrayList<>();
 
-	private List<CompletableFuture<?>> inFlight = new CopyOnWriteArrayList<>();
+	private final List<CompletableFuture<?>> inFlight = new CopyOnWriteArrayList<>();
 
 	public static void reset() {
 		INSTANCE = new MockLanguageServer(MockLanguageServer::defaultServerCapabilities);
@@ -136,14 +145,9 @@ public final class MockLanguageServer implements LanguageServer {
 	}
 
 	public <U> CompletableFuture<U> buildMaybeDelayedFuture(U value) {
-		if (delay > 0) {
-			CompletableFuture<U> future = CompletableFuture.runAsync(() -> {
-				try {
-					Thread.sleep(delay);
-				} catch (InterruptedException e) {
-					throw new RuntimeException(e);
-				}
-			}).thenApply(v -> value);
+		final Executor delayedExecutor = this.delayedExecutor;
+		if (delayedExecutor != null) {
+			final CompletableFuture<U> future = CompletableFuture.supplyAsync(() -> value, delayedExecutor);
 			inFlight.add(future);
 			return future;
 		}
@@ -175,6 +179,7 @@ public final class MockLanguageServer implements LanguageServer {
 		capabilities.setDocumentSymbolProvider(Boolean.TRUE);
 		capabilities.setLinkedEditingRangeProvider(new LinkedEditingRangeRegistrationOptions());
 		capabilities.setTypeHierarchyProvider(new TypeHierarchyRegistrationOptions());
+		capabilities.setFoldingRangeProvider(new FoldingRangeProviderOptions());
 		return capabilities;
 	}
 
@@ -233,7 +238,7 @@ public final class MockLanguageServer implements LanguageServer {
 		this.textDocumentService.setMockFormattingTextEdits(formattingTextEdits);
 	}
 
-	public void setDocumentHighlights(List<? extends DocumentHighlight> documentHighlights) {
+	public void setDocumentHighlights(Map<Position, List<? extends DocumentHighlight>> documentHighlights) {
 		this.textDocumentService.setDocumentHighlights(documentHighlights);
 	}
 
@@ -277,8 +282,9 @@ public final class MockLanguageServer implements LanguageServer {
 	public void exit() {
 	}
 
-	public void setTimeToProceedQueries(long l) {
-		this.delay = l;
+	public void setTimeToProceedQueries(final long delayInMS) {
+		this.delay = delayInMS;
+		this.delayedExecutor = CompletableFuture.delayedExecutor(delayInMS, TimeUnit.MILLISECONDS);
 	}
 
 	public void setDiagnostics(List<Diagnostic> diagnostics) {
@@ -342,4 +348,13 @@ public final class MockLanguageServer implements LanguageServer {
 		};
 	}
 
+	public void setFoldingRanges(List<FoldingRange> foldingRanges) {
+		this.textDocumentService.setFoldingRanges(foldingRanges);
+	}
+
+	@Override
+	public String toString() {
+		return "MockLanguageServer [started=" + started + ", delay=" + delay + ", remoteProxies=" + remoteProxies.size()
+				+ ", inFlight=" + inFlight.size() + "]";
+	}
 }

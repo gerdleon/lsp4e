@@ -12,8 +12,7 @@
  *******************************************************************************/
 package org.eclipse.lsp4e.test;
 
-import static org.eclipse.lsp4e.test.TestUtils.numberOfChangesIs;
-import static org.eclipse.lsp4e.test.TestUtils.waitForAndAssertCondition;
+import static org.eclipse.lsp4e.test.utils.TestUtils.*;
 import static org.junit.Assert.fail;
 
 import java.util.ArrayList;
@@ -21,14 +20,14 @@ import java.util.ConcurrentModificationException;
 import java.util.List;
 
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.resources.IProject;
-import org.eclipse.core.runtime.CoreException;
 import org.eclipse.jface.text.BadLocationException;
 import org.eclipse.jface.text.ITextViewer;
 import org.eclipse.lsp4e.LSPEclipseUtils;
 import org.eclipse.lsp4e.LanguageServers;
 import org.eclipse.lsp4e.VersionedEdits;
 import org.eclipse.lsp4e.internal.DocumentUtil;
+import org.eclipse.lsp4e.test.utils.AbstractTestWithProject;
+import org.eclipse.lsp4e.test.utils.TestUtils;
 import org.eclipse.lsp4e.tests.mock.MockLanguageServer;
 import org.eclipse.lsp4j.DocumentFormattingParams;
 import org.eclipse.lsp4j.FormattingOptions;
@@ -37,22 +36,9 @@ import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.ServerCapabilities;
 import org.eclipse.lsp4j.TextEdit;
 import org.eclipse.ui.IEditorPart;
-import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 
-public class VersioningSupportTest {
-	@Rule
-	public AllCleanRule clear = new AllCleanRule();
-
-	private IProject project;
-
-
-	@Before
-	public void setUp() throws CoreException {
-		project = TestUtils.createProject("VersioningSupportTest"+System.currentTimeMillis());
-	}
-
+public class VersioningSupportTest extends AbstractTestWithProject {
 
 	@Test
 	public void testVersionSupportSuccess() throws Exception {
@@ -100,8 +86,7 @@ public class VersioningSupportTest {
 		MockLanguageServer.INSTANCE.setFormattingTextEdits(formattingTextEdits);
 
 		IFile file = TestUtils.createUniqueTestFile(project, "Formatting Other Text");
-		IEditorPart editor = TestUtils.openEditor(file);
-		ITextViewer viewer = LSPEclipseUtils.getTextViewer(editor);
+		ITextViewer viewer = TestUtils.openTextViewer(file);
 
 		final var doc = viewer.getDocument();
 		final var docId = LSPEclipseUtils.toTextDocumentIdentifier(doc);
@@ -121,5 +106,4 @@ public class VersioningSupportTest {
 
 		edits.apply();
 	}
-
 }

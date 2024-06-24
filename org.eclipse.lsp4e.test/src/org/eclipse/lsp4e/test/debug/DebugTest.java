@@ -17,33 +17,21 @@ import static org.junit.Assert.fail;
 
 import java.util.Map;
 
-import org.eclipse.core.resources.IProject;
-import org.eclipse.core.runtime.CoreException;
 import org.eclipse.lsp4e.debug.debugmodel.DSPDebugTarget;
-import org.eclipse.lsp4e.test.AllCleanRule;
-import org.eclipse.lsp4e.test.TestUtils;
+import org.eclipse.lsp4e.test.utils.AbstractTestWithProject;
 import org.eclipse.lsp4j.jsonrpc.json.JsonRpcMethod;
 import org.eclipse.lsp4j.jsonrpc.services.ServiceEndpoints;
-import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 
-public class DebugTest {
-	@Rule public AllCleanRule clear = new AllCleanRule();
-	protected IProject project;
-
-	@Before
-	public void setUp() throws CoreException {
-		project = TestUtils.createProject("CompletionTest" + System.currentTimeMillis());
-	}
+public class DebugTest extends AbstractTestWithProject {
 
 	/**
 	 * Test for the `IllegalStateException: Duplicate RPC method runInTerminal` issue.
-	 * 
-	 * The issue has started to appear after the move of `runInTerminal` method from the `IDebugProtocolServer` 
-	 * interface to `IDebugProtocolClient` interface in LSP5J while the DSPDebugTarget class that implements `runInTerminal` 
+	 *
+	 * The issue has started to appear after the move of `runInTerminal` method from the `IDebugProtocolServer`
+	 * interface to `IDebugProtocolClient` interface in LSP5J while the DSPDebugTarget class that implements `runInTerminal`
 	 * method of `IDebugProtocolClient` interface leaved unchanged thus creating an RPC method duplication.
-	 * 
+	 *
 	 * @throws Exception
 	 */
 	@Test

@@ -13,7 +13,7 @@
  *******************************************************************************/
 package org.eclipse.lsp4e.test.rename;
 
-import static org.eclipse.lsp4e.test.TestUtils.waitForAndAssertCondition;
+import static org.eclipse.lsp4e.test.utils.TestUtils.waitForAndAssertCondition;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
@@ -36,15 +36,14 @@ import org.eclipse.core.filebuffers.ITextFileBufferManager;
 import org.eclipse.core.filesystem.EFS;
 import org.eclipse.core.filesystem.IFileStore;
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.core.runtime.NullProgressMonitor;
 import org.eclipse.jface.dialogs.Dialog;
 import org.eclipse.jface.text.IDocument;
 import org.eclipse.lsp4e.LSPEclipseUtils;
 import org.eclipse.lsp4e.operations.rename.LSPRenameProcessor;
-import org.eclipse.lsp4e.test.AllCleanRule;
-import org.eclipse.lsp4e.test.TestUtils;
+import org.eclipse.lsp4e.test.utils.AbstractTestWithProject;
+import org.eclipse.lsp4e.test.utils.TestUtils;
 import org.eclipse.lsp4e.tests.mock.MockLanguageServer;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
@@ -65,52 +64,49 @@ import org.eclipse.ui.PlatformUI;
 import org.eclipse.ui.commands.ICommandService;
 import org.eclipse.ui.handlers.IHandlerService;
 import org.eclipse.ui.texteditor.ITextEditor;
-import org.junit.Rule;
 import org.junit.Test;
 
-public class RenameTest {
-
-	@Rule public AllCleanRule clear = new AllCleanRule();
+public class RenameTest extends AbstractTestWithProject {
 
 	@Test
 	public void testRenameHandlerEnablement() throws Exception {
-		IProject project = TestUtils.createProject("blah");
 		IFile file = TestUtils.createUniqueTestFile(project, "old");
 		ITextEditor editor = (ITextEditor) TestUtils.openEditor(file);
 		editor.selectAndReveal(1, 0);
 		ICommandService commandService = PlatformUI.getWorkbench().getService(ICommandService.class);
 		Command command = commandService.getCommand(IWorkbenchCommandConstants.FILE_RENAME);
-		assertTrue(command.isEnabled());
+
+		waitForAndAssertCondition(2_000, () -> command.isEnabled());
 		assertTrue(command.isHandled());
 	}
 
 	@Test
 	public void testAsyncRenameHandlerEnablement() throws Exception {
-		long delay = 2000;
+		final int delay = 2_000;
 		// this fixed value is not really an optimal solution, since it depends on the following things
 		// to happen within that time frame. Should maybe re-work this in the future towards a more
 		// precise way of steering the execution from the test here
-
 		MockLanguageServer.INSTANCE.setTimeToProceedQueries(delay);
 
-		IProject project = TestUtils.createProject("blah");
-		IFile file = TestUtils.createUniqueTestFile(project, "old");
-		ITextEditor editor = (ITextEditor) TestUtils.openEditor(file);
-		editor.selectAndReveal(1, 0);
-		ICommandService commandService = PlatformUI.getWorkbench().getService(ICommandService.class);
-		Command command = commandService.getCommand(IWorkbenchCommandConstants.FILE_RENAME);
-		assertFalse(command.isEnabled() && command.isHandled());
+		try {
+			IFile file = TestUtils.createUniqueTestFile(project, "old");
+			ITextEditor editor = (ITextEditor) TestUtils.openEditor(file);
+			editor.selectAndReveal(1, 0);
 
-		Thread.sleep(delay * 3);
+			ICommandService commandService = PlatformUI.getWorkbench().getService(ICommandService.class);
+			Command command = commandService.getCommand(IWorkbenchCommandConstants.FILE_RENAME);
+			assertFalse(command.isEnabled());
 
-		// Put back so shutdown doesn't time out
-		MockLanguageServer.INSTANCE.setTimeToProceedQueries(0);
-		assertTrue(command.isEnabled() && command.isHandled());
+			waitForAndAssertCondition(3 * delay, () -> command.isEnabled());
+			assertTrue(command.isHandled());
+		} finally {
+			// Put back so shutdown doesn't time out
+			MockLanguageServer.INSTANCE.setTimeToProceedQueries(0);
+		}
 	}
 
 	@Test
 	public void testRenameRefactoring() throws Exception {
-		IProject project = TestUtils.createProject("blah");
 		IFile file = TestUtils.createUniqueTestFile(project, "old");
 		MockLanguageServer.INSTANCE.getTextDocumentService().setRenameEdit(createSimpleMockRenameEdit(LSPEclipseUtils.toUri(file)));
 		IDocument document = LSPEclipseUtils.getDocument(file);
@@ -129,7 +125,6 @@ public class RenameTest {
 
 	@Test
 	public void testPrepareRenameRefactoring() throws Exception {
-		IProject project = TestUtils.createProject("testPrepareRenameRefactoring");
 		IFile file = TestUtils.createUniqueTestFile(project, "old");
 		MockLanguageServer.INSTANCE.getTextDocumentService().setRenameEdit(createSimpleMockRenameEdit(LSPEclipseUtils.toUri(file)));
 		IDocument document = LSPEclipseUtils.getDocument(file);
@@ -148,7 +143,6 @@ public class RenameTest {
 
 	@Test
 	public void testPrepareRenameRefactoringError() throws Exception {
-		IProject project = TestUtils.createProject("testPrepareRenameRefactoring");
 		IFile file = TestUtils.createUniqueTestFile(project, "old");
 		MockLanguageServer.INSTANCE.getTextDocumentService().setRenameEdit(createSimpleMockRenameEdit(LSPEclipseUtils.toUri(file)));
 		MockLanguageServer.INSTANCE.getTextDocumentService().setPrepareRenameResult(null);
@@ -193,7 +187,6 @@ public class RenameTest {
 
 	@Test
 	public void testRenameChangeAlsoExternalFile() throws Exception {
-		IProject project = TestUtils.createProject("blah");
 		IFile workspaceFile = TestUtils.createUniqueTestFile(project, "old");
 		File externalFile = TestUtils.createTempFile("testRenameChangeAlsoExternalFile", ".lspt");
 		Files.write(externalFile.toPath(), "old".getBytes());
@@ -218,7 +211,6 @@ public class RenameTest {
 
 	@Test
 	public void testRenameHandlerExecution() throws Exception {
-		IProject project = TestUtils.createProject("blah");
 		IFile file = TestUtils.createUniqueTestFile(project, "old");
 		MockLanguageServer.INSTANCE.getTextDocumentService().setRenameEdit(createSimpleMockRenameEdit(LSPEclipseUtils.toUri(file)));
 		ITextEditor editor = (ITextEditor) TestUtils.openEditor(file);
@@ -260,13 +252,12 @@ public class RenameTest {
 
 	@Test
 	public void testPlaceholderUsingPlaceholderFromPrepareRenameResult() throws Exception {
-		IProject project = TestUtils.createProject("blah");
 		IFile file = TestUtils.createUniqueTestFile(project, "old");
 		MockLanguageServer.INSTANCE.getTextDocumentService().setRenameEdit(createSimpleMockRenameEdit(LSPEclipseUtils.toUri(file)));
 		IDocument document = LSPEclipseUtils.getDocument(file);
 		assertNotNull(document);
 		LSPRenameProcessor processor = new LSPRenameProcessor(document, 0);
-		
+
 		try {
 			processor.checkInitialConditions(new NullProgressMonitor());
 		} catch (CoreException e) {
@@ -277,7 +268,6 @@ public class RenameTest {
 
 	@Test
 	public void testPlaceholderUsingRangeFromPrepareRenameResult() throws Exception {
-		IProject project = TestUtils.createProject("blah");
 		IFile file = TestUtils.createUniqueTestFile(project, "old");
 		MockLanguageServer.INSTANCE.getTextDocumentService().setRenameEdit(createSimpleMockRenameEdit(LSPEclipseUtils.toUri(file)));
 		Range range = new Range(new Position(0, 1), new Position(0, 3)); // Two last letters of "old".
@@ -285,7 +275,7 @@ public class RenameTest {
 		IDocument document = LSPEclipseUtils.getDocument(file);
 		assertNotNull(document);
 		LSPRenameProcessor processor = new LSPRenameProcessor(document, 0);
-		
+
 		try {
 			processor.checkInitialConditions(new NullProgressMonitor());
 		} catch (CoreException e) {

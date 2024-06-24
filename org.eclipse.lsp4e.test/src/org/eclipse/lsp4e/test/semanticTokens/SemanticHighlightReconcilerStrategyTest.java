@@ -8,18 +8,17 @@
  *******************************************************************************/
 package org.eclipse.lsp4e.test.semanticTokens;
 
-import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.ExecutionException;
 
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.jface.text.ITextViewer;
-import org.eclipse.lsp4e.test.AllCleanRule;
-import org.eclipse.lsp4e.test.TestUtils;
+import org.eclipse.lsp4e.test.utils.AbstractTestWithProject;
+import org.eclipse.lsp4e.test.utils.TestUtils;
 import org.eclipse.lsp4e.tests.mock.MockLanguageServer;
 import org.eclipse.lsp4j.SemanticTokens;
 import org.eclipse.swt.custom.StyleRange;
@@ -27,19 +26,14 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
 import org.eclipse.ui.tests.harness.util.DisplayHelper;
 import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 
-public class SemanticHighlightReconcilerStrategyTest {
-	@Rule
-	public AllCleanRule clear = new AllCleanRule();
+public class SemanticHighlightReconcilerStrategyTest extends AbstractTestWithProject {
 
-	private IProject project;
 	private Shell shell;
 
 	@Before
-	public void setUp() throws CoreException {
-		project = TestUtils.createProject(getClass().getName() + System.currentTimeMillis());
+	public void setUp() {
 		shell = new Shell();
 
 		// Setup Server Capabilities
@@ -49,25 +43,45 @@ public class SemanticHighlightReconcilerStrategyTest {
 	}
 
 	@Test
-	public void testKeyword() throws InterruptedException, ExecutionException, CoreException {
+	public void testKeyword() throws CoreException {
 		SemanticTokens semanticTokens = new SemanticTokens();
 		semanticTokens.setData(SemanticTokensTestUtil.keywordSemanticTokens());
 
 		MockLanguageServer.INSTANCE.getTextDocumentService().setSemanticTokens(semanticTokens);
 
-		IFile file = TestUtils.createUniqueTestFile(project, "lspt", SemanticTokensTestUtil.keywordText);
+		IFile file = TestUtils.createUniqueTestFile(project, "lsptm", SemanticTokensTestUtil.keywordText);
 		ITextViewer textViewer = TestUtils.openTextViewer(file);
 
 		Display display = shell.getDisplay();
 		DisplayHelper.sleep(display, 2_000); // Give some time to the editor to update
 
 		StyleRange[] styleRanges = textViewer.getTextWidget().getStyleRanges();
+		var backgroundColor = textViewer.getTextWidget().getBackground();
 
-		List<StyleRange> expectedStyleRanges = Arrays.asList(//
-				new StyleRange(0, 4, SemanticTokensTestUtil.GREEN, null), //
-				new StyleRange(15, 4, SemanticTokensTestUtil.GREEN, null), //
-				new StyleRange(24, 7, SemanticTokensTestUtil.GREEN, null)//
-		);
-		assertArrayEquals(expectedStyleRanges.toArray(), styleRanges);
+		assertEquals(6, styleRanges.length);
+		
+		assertEquals(0, styleRanges[0].start);
+		assertEquals(4, styleRanges[0].length);
+		assertNotEquals(styleRanges[0].foreground, backgroundColor);
+		
+		assertEquals(4, styleRanges[1].start);
+		assertEquals(11, styleRanges[1].length);
+		assertNotEquals(styleRanges[1].foreground, backgroundColor);
+		
+		assertEquals(15, styleRanges[2].start);
+		assertEquals(4, styleRanges[2].length);
+		assertNotEquals(styleRanges[2].foreground, backgroundColor);
+		
+		assertEquals(19, styleRanges[3].start);
+		assertEquals(5, styleRanges[3].length);
+		assertNotEquals(styleRanges[3].foreground, backgroundColor);
+		
+		assertEquals(24, styleRanges[4].start);
+		assertEquals(7, styleRanges[4].length);
+		assertNotEquals(styleRanges[4].foreground, backgroundColor);
+		
+		assertEquals(31, styleRanges[5].start);
+		assertEquals(11, styleRanges[5].length);
+		assertNotEquals(styleRanges[5].foreground, backgroundColor);
 	}
 }

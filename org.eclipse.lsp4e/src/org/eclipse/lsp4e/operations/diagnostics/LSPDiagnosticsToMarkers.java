@@ -100,7 +100,7 @@ public class LSPDiagnosticsToMarkers implements Consumer<PublishDiagnosticsParam
 					.map(ISourceViewer.class::cast)
 					.forEach(sourceViewer -> updateEditorAnnotations(sourceViewer, diagnostics));
 			}
-		} catch (CoreException ex) {
+		} catch (Exception ex) {
 			LanguageServerPlugin.logError(ex);
 		}
 	}
@@ -127,15 +127,23 @@ public class LSPDiagnosticsToMarkers implements Consumer<PublishDiagnosticsParam
 					LanguageServerPlugin.logError(ex);
 				}
 			});
-			annotationModelExtension.replaceAnnotations(toRemove.toArray(new Annotation[toRemove.size()]), toAdd);
+			annotationModelExtension.replaceAnnotations(toRemove.toArray(Annotation[]::new), toAdd);
 		}
 	}
 
-	private WorkspaceJob updateMarkers(PublishDiagnosticsParams diagnostics, IResource resource) throws CoreException {
+	private WorkspaceJob updateMarkers(PublishDiagnosticsParams diagnostics, IResource resource) {
 		WorkspaceJob job = new WorkspaceJob("Update markers from diagnostics") { //$NON-NLS-1$
+			@Override
+			public boolean belongsTo(Object family) {
+				return LanguageServerPlugin.FAMILY_UPDATE_MARKERS == family;
+			}
 
 			@Override
 			public IStatus runInWorkspace(IProgressMonitor monitor) throws CoreException {
+				if (!resource.exists()) {
+					return Status.OK_STATUS;
+				}
+
 				final var toDeleteMarkers = new HashSet<IMarker>(
 						Arrays.asList(resource.findMarkers(markerType, true, IResource.DEPTH_ZERO)));
 				toDeleteMarkers
@@ -162,12 +170,17 @@ public class LSPDiagnosticsToMarkers implements Consumer<PublishDiagnosticsParam
 
 				try {
 					for (Diagnostic diagnostic : newDiagnostics) {
-						Map<String, Object> markerAttributes = computeMarkerAttributes(document, diagnostic, resource);
-						resource.createMarker(markerType, markerAttributes);
+						if (resource.exists()) {
+							Map<String, Object> markerAttributes = computeMarkerAttributes(document, diagnostic, resource);
+							resource.createMarker(markerType, markerAttributes);
+						}
 					}
 					for (Entry<IMarker, Diagnostic> entry : toUpdate.entrySet()) {
-						Map<String, Object> markerAttributes = computeMarkerAttributes(document, entry.getValue(), resource);
-						updateMarker(markerAttributes, entry.getKey());
+						IMarker marker = entry.getKey();
+						if (marker.exists()) {
+							Map<String, Object> markerAttributes = computeMarkerAttributes(document, entry.getValue(), resource);
+							updateMarker(markerAttributes, marker);
+						}
 					}
 					toDeleteMarkers.forEach(t -> {
 						try {
@@ -206,6 +219,9 @@ public class LSPDiagnosticsToMarkers implements Consumer<PublishDiagnosticsParam
 		}
 
 		for (IMarker marker : remainingMarkers) {
+			if (!marker.exists()) {
+				continue;
+			}
 			try {
 				if (LSPEclipseUtils.toOffset(diagnostic.getRange().getStart(), document) == MarkerUtilities.getCharStart(marker)
 						&& (LSPEclipseUtils.toOffset(diagnostic.getRange().getEnd(), document) == MarkerUtilities.getCharEnd(marker) || Objects.equals(diagnostic.getRange().getStart(), diagnostic.getRange().getEnd()))
@@ -271,7 +287,6 @@ public class LSPDiagnosticsToMarkers implements Consumer<PublishDiagnosticsParam
 			attributes.put(IMarker.CHAR_START, start);
 			attributes.put(IMarker.CHAR_END, end);
 		}
-
 
 		markerAttributeComputer
 				.ifPresent(c -> c.addMarkerAttributesForDiagnostic(diagnostic, document, resource, attributes));

@@ -11,11 +11,10 @@
  *******************************************************************************/
 package org.eclipse.lsp4e.test.codeactions;
 
-import static org.eclipse.lsp4e.test.TestUtils.waitForAndAssertCondition;
-import static org.eclipse.lsp4e.test.TestUtils.waitForCondition;
+import static org.eclipse.lsp4e.test.utils.TestUtils.waitForAndAssertCondition;
+import static org.eclipse.lsp4e.test.utils.TestUtils.waitForCondition;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -24,16 +23,13 @@ import java.util.stream.Collectors;
 
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IMarker;
-import org.eclipse.core.resources.IProject;
 import org.eclipse.core.resources.IResource;
 import org.eclipse.core.resources.ResourceAttributes;
 import org.eclipse.core.runtime.CoreException;
-import org.eclipse.core.runtime.NullProgressMonitor;
-import org.eclipse.lsp4e.LanguageServerPlugin;
 import org.eclipse.lsp4e.operations.diagnostics.LSPDiagnosticsToMarkers;
-import org.eclipse.lsp4e.test.AllCleanRule;
-import org.eclipse.lsp4e.test.NoErrorLoggedRule;
-import org.eclipse.lsp4e.test.TestUtils;
+import org.eclipse.lsp4e.test.utils.AbstractTestWithProject;
+import org.eclipse.lsp4e.test.utils.NoErrorLoggedRule;
+import org.eclipse.lsp4e.test.utils.TestUtils;
 import org.eclipse.lsp4e.tests.mock.MockLanguageServer;
 import org.eclipse.lsp4j.CodeAction;
 import org.eclipse.lsp4j.Command;
@@ -50,7 +46,6 @@ import org.eclipse.swt.widgets.Shell;
 import org.eclipse.swt.widgets.Table;
 import org.eclipse.swt.widgets.TableItem;
 import org.eclipse.ui.IEditorPart;
-import org.eclipse.ui.PartInitException;
 import org.eclipse.ui.ide.IDE;
 import org.eclipse.ui.part.FileEditorInput;
 import org.eclipse.ui.texteditor.AbstractTextEditor;
@@ -59,15 +54,13 @@ import org.eclipse.ui.texteditor.TextOperationAction;
 import org.junit.Rule;
 import org.junit.Test;
 
-public class CodeActionTests {
+public class CodeActionTests extends AbstractTestWithProject {
 
-	@Rule public NoErrorLoggedRule rule = new NoErrorLoggedRule(LanguageServerPlugin.getDefault().getLog());
-	@Rule public AllCleanRule clear = new AllCleanRule();
+	public final @Rule NoErrorLoggedRule noErrorLoggedRule = new NoErrorLoggedRule();
 
 	@Test
 	public void testCodeActionsClientCommandForTextEdit() throws CoreException {
-		IProject p = TestUtils.createProject(getClass().getSimpleName() + System.currentTimeMillis());
-		IFile f = TestUtils.createUniqueTestFile(p, "error");
+		IFile f = TestUtils.createUniqueTestFile(project, "error");
 		MockLanguageServer.INSTANCE.setCodeActions(Collections.singletonList(Either.forLeft(new Command(
 				"fixme",
 				"edit",
@@ -86,14 +79,12 @@ public class CodeActionTests {
 			assertResolution(editor, m, "fixed");
 		} finally {
 			editor.close(false);
-			p.delete(true, new NullProgressMonitor());
 		}
 	}
 
 	@Test
 	public void testCodeActionsClientCommandForWorkspaceEdit() throws CoreException {
-		IProject p = TestUtils.createProject(getClass().getSimpleName() + System.currentTimeMillis());
-		IFile f = TestUtils.createUniqueTestFile(p, "error");
+		IFile f = TestUtils.createUniqueTestFile(project, "error");
 
 		TextEdit tEdit = new TextEdit(new Range(new Position(0, 0), new Position(0, 5)), "fixed");
 		WorkspaceEdit wEdit = new WorkspaceEdit(Collections.singletonMap(f.getLocationURI().toString(), Collections.singletonList(tEdit)));
@@ -123,8 +114,7 @@ public class CodeActionTests {
 	@Test
 	public void testCodeActionsQuickAssist() throws CoreException {
 		MockLanguageServer.reset();
-		IProject p = TestUtils.createProject(getClass().getSimpleName() + System.currentTimeMillis());
-		IFile f = TestUtils.createUniqueTestFile(p, "error");
+		IFile f = TestUtils.createUniqueTestFile(project, "error");
 
 		TextEdit tEdit = new TextEdit(new Range(new Position(0, 0), new Position(0, 5)), "fixed");
 		WorkspaceEdit wEdit = new WorkspaceEdit(Collections.singletonMap(f.getLocationURI().toString(), Collections.singletonList(tEdit)));
@@ -147,9 +137,40 @@ public class CodeActionTests {
 	}
 
 	@Test
+	public void testSlowCodeActionsQuickAssist() throws CoreException {
+		MockLanguageServer.reset();
+		IFile f = TestUtils.createUniqueTestFile(project, "error");
+
+		TextEdit tEdit = new TextEdit(new Range(new Position(0, 0), new Position(0, 5)), "fixed");
+		WorkspaceEdit wEdit = new WorkspaceEdit(Collections.singletonMap(f.getLocationURI().toString(), Collections.singletonList(tEdit)));
+		MockLanguageServer.INSTANCE.setCodeActions(Collections
+				.singletonList(Either.forLeft(new Command(
+				"fixme",
+				"edit",
+				Collections.singletonList(wEdit))
+			)
+		));
+		MockLanguageServer.INSTANCE.setTimeToProceedQueries(1000);
+		AbstractTextEditor editor = (AbstractTextEditor)TestUtils.openEditor(f);
+		final Set<Shell> beforeShells = Arrays.stream(editor.getSite().getShell().getDisplay().getShells()).filter(Shell::isVisible).collect(Collectors.toSet());
+		editor.selectAndReveal(3, 0);
+		TextOperationAction action = (TextOperationAction) editor.getAction(ITextEditorActionConstants.QUICK_ASSIST);
+		action.update();
+		action.run();
+		waitForAndAssertCondition(3000, () -> {
+			Shell completionShell= TestUtils.findNewShell(beforeShells, editor.getSite().getShell().getDisplay());
+			if (completionShell == null) {
+				return false;
+			}
+			final Table completionProposalList = TestUtils.findCompletionSelectionControl(completionShell);
+			return completionProposalList.getItemCount() == 1 && "fixme".equals(completionProposalList.getItem(0).getText());
+		});
+		assertEquals(1, MockLanguageServer.INSTANCE.getTextDocumentService().codeActionRequests);
+	}
+
+	@Test
 	public void testCodeActionLiteralWorkspaceEdit() throws CoreException {
-		IProject p = TestUtils.createProject(getClass().getSimpleName() + System.currentTimeMillis());
-		IFile f = TestUtils.createUniqueTestFile(p, "error");
+		IFile f = TestUtils.createUniqueTestFile(project, "error");
 
 		TextEdit tEdit = new TextEdit(new Range(new Position(0, 0), new Position(0, 5)), "fixed");
 		WorkspaceEdit wEdit = new WorkspaceEdit(Collections.singletonMap(f.getLocationURI().toString(), Collections.singletonList(tEdit)));
@@ -165,8 +186,7 @@ public class CodeActionTests {
 
 	@Test
 	public void testNoCodeActionOnReadOnlySource() throws CoreException {
-		IProject p = TestUtils.createProject(getClass().getSimpleName() + System.currentTimeMillis());
-		IFile f = TestUtils.createUniqueTestFile(p, "error");
+		IFile f = TestUtils.createUniqueTestFile(project, "error");
 		f.setResourceAttributes(new ResourceAttributes() {
 			@Override
 			public boolean isReadOnly() {
@@ -187,8 +207,7 @@ public class CodeActionTests {
 
 	@Test
 	public void testCodeActionLiteralWithClientCommand() throws CoreException {
-		IProject p = TestUtils.createProject(getClass().getSimpleName() + System.currentTimeMillis());
-		IFile f = TestUtils.createUniqueTestFile(p, "error");
+		IFile f = TestUtils.createUniqueTestFile(project, "error");
 
 		TextEdit tEdit = new TextEdit(new Range(new Position(0, 0), new Position(0, 5)), "fixed");
 		WorkspaceEdit wEdit = new WorkspaceEdit(Collections.singletonMap(f.getLocationURI().toString(), Collections.singletonList(tEdit)));
@@ -204,9 +223,8 @@ public class CodeActionTests {
 
 	@Test
 	public void testCodeActionWorkspaceEditlWithDifferentURI() throws CoreException {
-		IProject p = TestUtils.createProject(getClass().getSimpleName() + System.currentTimeMillis());
-		IFile sourceFile = TestUtils.createUniqueTestFile(p, "error");
-		IFile targetFile = TestUtils.createUniqueTestFile(p, "fixme");
+		IFile sourceFile = TestUtils.createUniqueTestFile(project, "error");
+		IFile targetFile = TestUtils.createUniqueTestFile(project, "fixme");
 
 		// create a diagnostic on the sourceFile with a code action
 		// that changes the targetFile
@@ -231,11 +249,11 @@ public class CodeActionTests {
 		assertEquals(new FileEditorInput(targetFile), ((AbstractTextEditor)activeEditorPart).getEditorInput());
 	}
 
-	public static IMarker assertDiagnostics(IFile f, String markerMessage, String resolutionLabel) throws CoreException {
+	private static IMarker assertDiagnostics(IFile f, String markerMessage, String resolutionLabel) throws CoreException {
 		return assertDiagnostics(f, markerMessage, resolutionLabel, true);
 	}
 
-	public static IMarker assertDiagnostics(IFile f, String markerMessage, String resolutionLabel, boolean resolutionExpected) throws CoreException {
+	private static IMarker assertDiagnostics(IFile f, String markerMessage, String resolutionLabel, boolean resolutionExpected) throws CoreException {
 		waitForAndAssertCondition(2_000, () -> {
 			IMarker[] markers = f.findMarkers(LSPDiagnosticsToMarkers.LS_DIAGNOSTIC_MARKER_TYPE, true,
 					IResource.DEPTH_ZERO);
@@ -255,7 +273,7 @@ public class CodeActionTests {
 		return m;
 	}
 
-	public static void assertResolution(AbstractTextEditor editor, IMarker m, String newText) {
+	private static void assertResolution(AbstractTextEditor editor, IMarker m, String newText) {
 		IDE.getMarkerHelpRegistry().getResolutions(m)[0].run(m);
 
 		waitForCondition(1_000,
@@ -267,15 +285,10 @@ public class CodeActionTests {
 		assertEquals(newText, ((StyledText) editor.getAdapter(Control.class)).getText());
 	}
 
-	public static void assertResolution(IFile targetFile, IMarker m, String newText) {
+	private static void assertResolution(IFile targetFile, IMarker m, String newText) {
 		IDE.getMarkerHelpRegistry().getResolutions(m)[0].run(m);
 
-		IEditorPart editorPart = null;
-		try {
-			editorPart = TestUtils.getEditor(targetFile);
-		} catch (PartInitException e) {
-			fail(e.getMessage());
-		}
+		IEditorPart editorPart = TestUtils.getEditor(targetFile);
 		assertTrue(editorPart instanceof AbstractTextEditor);
 		AbstractTextEditor editor = (AbstractTextEditor)editorPart;
 
@@ -287,5 +300,4 @@ public class CodeActionTests {
 				() -> newText.equals(((StyledText) editor.getAdapter(Control.class)).getText()));
 		assertEquals(newText, ((StyledText) editor.getAdapter(Control.class)).getText());
 	}
-
 }

@@ -47,12 +47,12 @@ public class WorkspaceSymbolsQuickAccessProvider implements IQuickAccessComputer
 	@Override
 	public boolean needsRefresh() {
 		return this.usedLanguageServerWrappers == null
-				|| !this.usedLanguageServerWrappers.equals(LanguageServiceAccessor.getStartedWrappers(null, capabilities -> LSPEclipseUtils.hasCapability(capabilities.getWorkspaceSymbolProvider()), true));
+				|| !this.usedLanguageServerWrappers.equals(LanguageServiceAccessor.getStartedWrappers(capabilities -> LSPEclipseUtils.hasCapability(capabilities.getWorkspaceSymbolProvider()), true));
 	}
 
 	@Override
 	public QuickAccessElement[] computeElements(String query, IProgressMonitor monitor) {
-		this.usedLanguageServerWrappers = LanguageServiceAccessor.getStartedWrappers(null, capabilities -> LSPEclipseUtils.hasCapability(capabilities.getWorkspaceSymbolProvider()), true);
+		this.usedLanguageServerWrappers = LanguageServiceAccessor.getStartedWrappers(capabilities -> LSPEclipseUtils.hasCapability(capabilities.getWorkspaceSymbolProvider()), true);
 		if (usedLanguageServerWrappers.isEmpty()) {
 			return new QuickAccessElement[0];
 		}
@@ -74,7 +74,7 @@ public class WorkspaceSymbolsQuickAccessProvider implements IQuickAccessComputer
 			LanguageServerPlugin.logWarning("Could not get workspace symbols due to timeout after 1 second in `workspace/symbol`", e); //$NON-NLS-1$
 		}
 
-		return res.toArray(new QuickAccessElement[res.size()]);
+		return res.toArray(QuickAccessElement[]::new);
 	}
 
 }

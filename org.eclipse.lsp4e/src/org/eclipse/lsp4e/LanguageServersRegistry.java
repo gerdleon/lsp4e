@@ -22,11 +22,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
-import java.util.stream.Collectors;
 
 import org.eclipse.core.expressions.ExpressionConverter;
 import org.eclipse.core.expressions.IEvaluationContext;
@@ -81,7 +79,8 @@ public class LanguageServersRegistry {
 	private static final String LANGUAGE_ID_ATTRIBUTE = "languageId"; //$NON-NLS-1$
 	private static final String CLASS_ATTRIBUTE = "class"; //$NON-NLS-1$
 	private static final String CLIENT_IMPL_ATTRIBUTE = "clientImpl"; //$NON-NLS-1$
-	private static final String MARKER_TYPE_ELEMENT = "makerType"; //$NON-NLS-1$
+	private static final String MAKER_TYPE_ELEMENT = "makerType"; //$NON-NLS-1$
+	private static final String MARKER_TYPE_ELEMENT = "markerType"; //$NON-NLS-1$
 	private static final String MARKER_ATTR_COMPUTER_ELEMENT = "markerAttributeComputer"; //$NON-NLS-1$
 	private static final String SERVER_INTERFACE_ATTRIBUTE = "serverInterface"; //$NON-NLS-1$
 	private static final String LAUNCHER_BUILDER_ATTRIBUTE = "launcherBuilder"; //$NON-NLS-1$
@@ -130,6 +129,12 @@ public class LanguageServersRegistry {
 		private Consumer<PublishDiagnosticsParams> getDiagnosticHandler() {
 			String serverId = extension.getAttribute(ID_ATTRIBUTE);
 			String markerType = extension.getAttribute(MARKER_TYPE_ELEMENT);
+			if (markerType == null) {
+				markerType = extension.getAttribute(MAKER_TYPE_ELEMENT);
+				if (markerType != null) {
+					LanguageServerPlugin.logWarning("Please use the property " + MARKER_TYPE_ELEMENT+ ". The legacy property "+ MAKER_TYPE_ELEMENT + " will be removed.", null); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+				}
+			}
 			IMarkerAttributeComputer markerAttributeComputerElement = null;
 			try {
 				String markerAttributeComputer = extension.getAttribute(MARKER_ATTR_COMPUTER_ELEMENT);
@@ -316,9 +321,10 @@ public class LanguageServersRegistry {
 	}
 
 	private IEvaluationContext evaluationContext() {
-		return Optional.ofNullable(PlatformUI.getWorkbench().getService(IHandlerService.class))//
-				.map(IHandlerService::getCurrentState)//
-				.orElse(null);
+		final var handlerService = PlatformUI.getWorkbench().getService(IHandlerService.class);
+		return handlerService == null
+				? null
+				: handlerService.getCurrentState();
 	}
 
 	private void persistContentTypeToLaunchConfigurationMapping() {
@@ -358,7 +364,7 @@ public class LanguageServersRegistry {
 				}
 				// TODO support "priority" attribute, but it's not made public
 				return mapping1.getKey().getId().compareTo(mapping2.getKey().getId());
-			}).collect(Collectors.toList());
+			}).toList();
 	}
 
 	public void registerAssociation(@NonNull IContentType contentType, @NonNull ILaunchConfiguration launchConfig, @NonNull Set<String> launchMode) {

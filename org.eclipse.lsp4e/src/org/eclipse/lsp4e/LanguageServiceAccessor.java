@@ -29,7 +29,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArraySet;
-import java.util.concurrent.ExecutionException;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -79,7 +78,7 @@ public class LanguageServiceAccessor {
 	}
 
 	/**
-	 * A bean storing association of a Document/File with a language server.
+	 * A bean storing association of a Document/File with a language server wrapper.
 	 * @deprecated use {@link LanguageServers#forDocument(IDocument)} instead.
 	 */
 	@Deprecated(forRemoval = true)
@@ -109,41 +108,12 @@ public class LanguageServiceAccessor {
 			return this.fileUri;
 		}
 
-		/**
-		 * Returns the language server, regardless of if it is initialized.
-		 *
-		 * @deprecated use {@link #getLanguageServerWrapper()} instead.
-		 */
-		@Deprecated(forRemoval = true)
-		public LanguageServer getLanguageClient() {
-			try {
-				return this.wrapper.getInitializedServer().get();
-			} catch (ExecutionException e) {
-				LanguageServerPlugin.logError(e);
-				return this.wrapper.getServer();
-			} catch (InterruptedException e) {
-				LanguageServerPlugin.logError(e);
-				Thread.currentThread().interrupt();
-				return this.wrapper.getServer();
-			}
-		}
-
 		public LanguageServerWrapper getLanguageServerWrapper() {
 			return wrapper;
 		}
 
 		public int getVersion() {
-			return wrapper.getVersion(fileUri);
-		}
-
-		/**
-		 * Returns the language server, regardless of if it is initialized.
-		 *
-		 * @deprecated use {@link #getLanguageServerWrapper()} instead.
-		 */
-		@Deprecated(forRemoval = true)
-		public CompletableFuture<LanguageServer> getInitializedLanguageClient() {
-			return this.wrapper.getInitializedServer();
+			return wrapper.getTextDocumentVersion(fileUri);
 		}
 
 		public @Nullable ServerCapabilities getCapabilites() {
@@ -153,15 +123,6 @@ public class LanguageServiceAccessor {
 		public boolean isActive() {
 			return this.wrapper.isActive();
 		}
-	}
-
-	/**
-	 * @deprecated use {@link LanguageServers#forDocument(IDocument)} instead.
-	 */
-	@Deprecated(forRemoval = true)
-	public static @NonNull List<CompletableFuture<LanguageServer>> getInitializedLanguageServers(@NonNull IFile file,
-			@Nullable Predicate<ServerCapabilities> request) throws IOException {
-		return getLSWrappers(file, request).stream().map(LanguageServerWrapper::getInitializedServer).toList();
 	}
 
 	public static void disableLanguageServerContentType(
@@ -330,7 +291,6 @@ public class LanguageServiceAccessor {
 		final var directContentTypes = LSPEclipseUtils.getDocumentContentTypes(document);
 		final var contentTypesToProcess = new ArrayDeque<IContentType>(directContentTypes);
 		final var processedContentTypes = new HashSet<IContentType>(directContentTypes.size());
-		final var path = new Path(uri.getPath());
 		final var file = LSPEclipseUtils.getFile(document);
 
 		while (!contentTypesToProcess.isEmpty()) {
@@ -363,6 +323,7 @@ public class LanguageServiceAccessor {
 					}
 
 					final var fileProject = file != null ? file.getProject() : null;
+					final var path = uri.getPath() != null ? new Path(uri.getPath()) : null;
 					final var wrapper = fileProject != null //
 							? new LanguageServerWrapper(fileProject, serverDefinition)
 							: new LanguageServerWrapper(serverDefinition, path);
@@ -386,19 +347,18 @@ public class LanguageServiceAccessor {
 	 * @param project
 	 * @param serverDefinition
 	 * @return a new or existing {@link LanguageServerWrapper} for the given definition.
-	 * @throws IOException
 	 */
 	@NonNull
 	public static LanguageServerWrapper getLSWrapper(@Nullable IProject project,
-			@NonNull LanguageServerDefinition serverDefinition) throws IOException {
+			@NonNull LanguageServerDefinition serverDefinition) {
 		return getLSWrapper(project, serverDefinition, null);
 	}
 
 	@NonNull
 	private static LanguageServerWrapper getLSWrapper(@Nullable IProject project,
-			@NonNull LanguageServerDefinition serverDefinition, @Nullable IPath initialPath) throws IOException {
+			@NonNull LanguageServerDefinition serverDefinition, @Nullable IPath initialPath) {
 
-		final Predicate<LanguageServerWrapper> serverSelector = wrapper -> project != null && wrapper.canOperate(project)
+		final Predicate<LanguageServerWrapper> serverSelector = wrapper -> wrapper.canOperate(project)
 				&& wrapper.serverDefinition.equals(serverDefinition);
 
 		var matchingServer = startedServers.stream().filter(serverSelector).findFirst();
@@ -423,7 +383,7 @@ public class LanguageServiceAccessor {
 		}
 	}
 
-	public static @NonNull LanguageServerWrapper startLanguageServer(@NonNull LanguageServerDefinition serverDefinition) throws IOException {
+	public static @NonNull LanguageServerWrapper startLanguageServer(@NonNull LanguageServerDefinition serverDefinition) {
 		synchronized (startedServers) {
 			LanguageServerWrapper wrapper = startedServers.stream().filter(w -> w.serverDefinition == serverDefinition).findFirst().orElseGet(() -> {
 				LanguageServerWrapper w = new LanguageServerWrapper(serverDefinition, null);
@@ -433,31 +393,6 @@ public class LanguageServiceAccessor {
 			if (!wrapper.isActive()) {
 				wrapper.start();
 			}
-			return wrapper;
-		}
-	}
-
-	private static LanguageServerWrapper getLSWrapperForConnection(@NonNull IDocument document,
-			@NonNull LanguageServerDefinition serverDefinition, @Nullable IPath initialPath) throws IOException {
-
-		final Predicate<LanguageServerWrapper> serverSelector = wrapper -> wrapper.canOperate(document)
-				&& wrapper.serverDefinition.equals(serverDefinition);
-
-		var matchingServer = startedServers.stream().filter(serverSelector).findFirst();
-		if (matchingServer.isPresent()) {
-			return matchingServer.get();
-		}
-
-		synchronized (startedServers) {
-			// check again while holding the write lock
-			matchingServer = startedServers.stream().filter(serverSelector).findFirst();
-			if (matchingServer.isPresent()) {
-				return matchingServer.get();
-			}
-
-			final var wrapper = new LanguageServerWrapper(serverDefinition, initialPath);
-			wrapper.start();
-			startedServers.add(wrapper);
 			return wrapper;
 		}
 	}
@@ -472,46 +407,83 @@ public class LanguageServiceAccessor {
 	}
 
 	@NonNull
+	public static List<@NonNull LanguageServerWrapper> getStartedWrappers(Predicate<ServerCapabilities> request, boolean onlyActiveLS) {
+		return getStartedWrappers(w -> true, request, onlyActiveLS);
+	}
+
+	@NonNull
 	public static List<@NonNull LanguageServerWrapper> getStartedWrappers(@Nullable IProject project, Predicate<ServerCapabilities> request, boolean onlyActiveLS) {
+		return getStartedWrappers(w -> w.canOperate(project), request, onlyActiveLS);
+	}
+
+	@NonNull
+	public static List<@NonNull LanguageServerWrapper> getStartedWrappers(@NonNull IDocument document, Predicate<ServerCapabilities> request, boolean onlyActiveLS) {
+		return getStartedWrappers(w -> w.canOperate(document), request, onlyActiveLS);
+	}
+
+	@NonNull
+	private static List<@NonNull LanguageServerWrapper> getStartedWrappers(Predicate<LanguageServerWrapper> canOperatePredicate, Predicate<ServerCapabilities> capabilitiesPredicate, boolean onlyActiveLS) {
 		List<@NonNull LanguageServerWrapper> result = new ArrayList<>();
 		for (LanguageServerWrapper wrapper : startedServers) {
-			if ((!onlyActiveLS || wrapper.isActive()) && (project == null || wrapper.canOperate(project))) {
-				if (capabilitiesComply(wrapper, request)) {
+			if ((!onlyActiveLS || wrapper.isActive()) && canOperatePredicate.test(wrapper) && capabilitiesComply(wrapper, capabilitiesPredicate)) {
 					result.add(wrapper);
-				}
 			}
 		}
 		return result;
 	}
 
 	/**
-	 * Returns {@code true} if there are running language servers satisfying a capability predicate. This does not
-	 * start any matching language servers.
+	 * Returns {@code true} if there are running language servers satisfying a capability predicate.
+	 * This does not start any matching language servers.
 	 *
 	 * @param request
 	 * @return {@code true} if there are running language servers satisfying a capability predicate
 	 */
-	public static boolean hasActiveLanguageServers(Predicate<ServerCapabilities> request) {
-		return !getLanguageServers(null, request, true).isEmpty();
+	public static boolean hasActiveLanguageServers(@NonNull Predicate<ServerCapabilities> request) {
+		return !getLanguageServers(request).isEmpty();
+	}
+
+	public static boolean hasActiveLanguageServers(@Nullable IFile file, @NonNull Predicate<ServerCapabilities> request) {
+		final IProject project = file != null ? file.getProject() : null;
+		return !getLanguageServers(project, request).isEmpty();
+	}
+
+	public static boolean hasActiveLanguageServers(@NonNull IDocument document, @NonNull Predicate<ServerCapabilities> request) {
+		return !getLanguageServers(document, request).isEmpty();
 	}
 
 	/**
-	 * Gets list of LS initialized for given project.
+	 * Gets list of LS initialized for any project
 	 *
-	 * @param project
-	 * @param request
+	 * @param onlyActiveLS
+	 *			true if this method should return only the already running
+	 *			language servers, otherwise previously started language servers
+	 *			will be re-activated
 	 * @return list of Language Servers
-	 * @deprecated use {@link LanguageServers#forProject(IProject)} instead.
 	 */
-	@Deprecated(forRemoval = true)
 	@NonNull
-	public static List<@NonNull LanguageServer> getLanguageServers(@NonNull IProject project,
-			Predicate<ServerCapabilities> request) {
-		return getLanguageServers(project, request, false);
+	private static List<@NonNull LanguageServer> getLanguageServers(Predicate<ServerCapabilities> capabilitiesPredicate) {
+		List<@NonNull LanguageServerWrapper> wrappers = getStartedWrappers(capabilitiesPredicate, true);
+		return getLanguageServersFromWrappers(wrappers);
 	}
 
 	/**
 	 * Gets list of LS initialized for given project
+	 *
+	 * @param onlyActiveLS
+	 *			true if this method should return only the already running
+	 *			language servers, otherwise previously started language servers
+	 *			will be re-activated
+	 * @return list of Language Servers
+	 */
+	@NonNull
+	private static List<@NonNull LanguageServer> getLanguageServers(@Nullable IProject project, Predicate<ServerCapabilities> capabilitiesPredicate) {
+		List<@NonNull LanguageServerWrapper> wrappers = getStartedWrappers(project, capabilitiesPredicate, true);
+		return getLanguageServersFromWrappers(wrappers);
+	}
+
+	/**
+	 * Gets list of LS initialized for given document
 	 *
 	 * @param onlyActiveLS
 	 *            true if this method should return only the already running
@@ -520,9 +492,12 @@ public class LanguageServiceAccessor {
 	 * @return list of Language Servers
 	 */
 	@NonNull
-	private static List<@NonNull LanguageServer> getLanguageServers(@Nullable IProject project,
-			Predicate<ServerCapabilities> request, boolean onlyActiveLS) {
-		List<@NonNull LanguageServerWrapper> wrappers = getStartedWrappers(project, request, onlyActiveLS);
+	private static List<@NonNull LanguageServer> getLanguageServers(@NonNull IDocument document, Predicate<ServerCapabilities> capabilitiesPredicate) {
+		List<@NonNull LanguageServerWrapper> wrappers = getStartedWrappers(document, capabilitiesPredicate, true);
+		return getLanguageServersFromWrappers(wrappers);
+	}
+
+	private static List<@NonNull LanguageServer> getLanguageServersFromWrappers(List<@NonNull LanguageServerWrapper> wrappers) {
 		final var servers = new ArrayList<@NonNull LanguageServer>(wrappers.size());
 		for (LanguageServerWrapper wrapper : wrappers) {
 			@Nullable
@@ -559,46 +534,6 @@ public class LanguageServiceAccessor {
 			LanguageServerPlugin.logError(e);
 		}
 		return res;
-	}
-
-	/**
-	 *
-	 * @param document
-	 * @param filter
-	 * @return
-	 * @since 0.9
-	 * @deprecated use {@link LanguageServers#forDocument(IDocument)} instead.
-	 */
-	@Deprecated(forRemoval = true)
-	@NonNull
-	public static CompletableFuture<List<@NonNull LanguageServer>> getLanguageServers(@NonNull IDocument document,
-			Predicate<ServerCapabilities> filter) {
-		URI uri = LSPEclipseUtils.toUri(document);
-		if (uri == null) {
-			return CompletableFuture.completedFuture(Collections.emptyList());
-		}
-		final var res = Collections.synchronizedList(new ArrayList<@NonNull LanguageServer>());
-		try {
-			return CompletableFuture.allOf(getLSWrappers(document).stream()
-					.map(wrapper -> wrapper.getInitializedServer().thenComposeAsync(server -> {
-						if (server != null && (filter == null || filter.test(wrapper.getServerCapabilities()))) {
-							try {
-								return wrapper.connectDocument(document);
-							} catch (IOException ex) {
-								LanguageServerPlugin.logError(ex);
-							}
-						}
-						return CompletableFuture.completedFuture(null);
-					}).thenAccept(w -> {
-						LanguageServer server = w.getServer();
-						if (server != null) {
-							res.add(server);
-						}
-					})).toArray(CompletableFuture[]::new)).thenApply(theVoid -> res);
-		} catch (final Exception e) {
-			LanguageServerPlugin.logError(e);
-		}
-		return CompletableFuture.completedFuture(Collections.emptyList());
 	}
 
 	static void shutdownAllDispatchers() {

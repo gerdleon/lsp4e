@@ -11,38 +11,29 @@
  *******************************************************************************/
 package org.eclipse.lsp4e.test;
 
-import static org.eclipse.lsp4e.test.TestUtils.waitForAndAssertCondition;
+import static org.eclipse.lsp4e.test.utils.TestUtils.waitForAndAssertCondition;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
 import java.util.List;
 
 import org.eclipse.core.resources.IFile;
-import org.eclipse.core.resources.IProject;
 import org.eclipse.core.runtime.CoreException;
 import org.eclipse.jdt.annotation.NonNull;
 import org.eclipse.lsp4e.ContentTypeToLanguageServerDefinition;
 import org.eclipse.lsp4e.LanguageServerWrapper;
 import org.eclipse.lsp4e.LanguageServiceAccessor;
+import org.eclipse.lsp4e.test.utils.AbstractTestWithProject;
+import org.eclipse.lsp4e.test.utils.TestUtils;
 import org.eclipse.lsp4e.tests.mock.MockLanguageServer;
 import org.eclipse.ui.IEditorPart;
 import org.eclipse.ui.IWorkbenchPage;
 import org.eclipse.ui.texteditor.AbstractTextEditor;
-import org.junit.Before;
-import org.junit.Rule;
 import org.junit.Test;
 
-public class RunningLanguageServerTest {
-
-	private IProject project;
-
-	@Rule public AllCleanRule clear = new AllCleanRule();
-
-	@Before
-	public void setUp() throws CoreException {
-		project =  TestUtils.createProject("StartStopServerTest"+System.currentTimeMillis());
-	}
+public class RunningLanguageServerTest extends AbstractTestWithProject {
 
 	/**
 	 * checks if language servers get started and shutdown correctly if opening and
@@ -53,15 +44,15 @@ public class RunningLanguageServerTest {
 		IFile testFile = TestUtils.createUniqueTestFile(project, "");
 
 		// open and close the editor several times
-		for(int i = 0; i < 10; i++) {
+		for(int i = 1; i <= 10; i++) {
 			IEditorPart editor = TestUtils.openEditor(testFile);
-			LanguageServiceAccessor.getLSWrappers(testFile, capabilities -> Boolean.TRUE).iterator()
-					.next();
-			waitForAndAssertCondition("language server should be started for iteration #" + i, 5_000,
+
+			assertFalse(LanguageServiceAccessor.getLSWrappers(testFile, capabilities -> true).isEmpty());
+			waitForAndAssertCondition("MockLanguageServer should be started for iteration #" + i, 5_000,
 					() -> MockLanguageServer.INSTANCE.isRunning());
 
 			((AbstractTextEditor)editor).close(false);
-			waitForAndAssertCondition("language server should be closed after iteration #" + i, 5_000,
+			waitForAndAssertCondition("MockLanguageServer should be stopped after iteration #" + i, 5_000,
 					() -> !MockLanguageServer.INSTANCE.isRunning());
 		}
 	}
@@ -76,7 +67,7 @@ public class RunningLanguageServerTest {
 
 		TestUtils.openEditor(testFile);
 		@NonNull List<LanguageServerWrapper> initializedLanguageServers = LanguageServiceAccessor
-				.getLSWrappers(testFile, capabilities -> Boolean.TRUE);
+				.getLSWrappers(testFile, capabilities -> true);
 		assertNotNull(initializedLanguageServers);
 		assertEquals("language server should not be started because it is disabled", 0,
 				initializedLanguageServers.size());
@@ -112,5 +103,4 @@ public class RunningLanguageServerTest {
 		page.closeEditor(editor, false);
 		assertTrue(System.currentTimeMillis() - before < 1000);
 	}
-
 }
